@@ -3,3 +3,6 @@
 *.db
 *.md
 !README.md
+*pyc
+/venv/
+/config.py
