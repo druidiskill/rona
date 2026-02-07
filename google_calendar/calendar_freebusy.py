@@ -12,6 +12,7 @@
 - book_slot
 """
 import os
+from dotenv import load_dotenv
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Tuple
@@ -21,9 +22,15 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+load_dotenv()
+
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-CREDENTIALS_FILE = "calendar_properties_primary.json"
-TOKEN_FILE = "calendar_properties_primary.json"
+CREDENTIALS_FILE = os.getenv(
+    "GOOGLE_CREDENTIALS_FILE", "google_calendar/calendar_properties_primary.json"
+)
+TOKEN_FILE = os.getenv(
+    "GOOGLE_TOKEN_FILE", "google_calendar/calendar_properties_primary.json"
+)
 
 
 def build_calendar_service():

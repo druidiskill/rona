@@ -4,9 +4,17 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from config import DATABASE_URL
 
+def _resolve_db_path(database_url: str) -> str:
+    if database_url.startswith("sqlite:///"):
+        return database_url.replace("sqlite:///", "", 1)
+    if database_url.startswith("sqlite://"):
+        return database_url.replace("sqlite://", "", 1)
+    return database_url
+
+
 class DatabaseManager:
-    def __init__(self, db_path: str = "photostudio.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or _resolve_db_path(DATABASE_URL or "photostudio.db")
     
     async def init_database(self):
         """Инициализация базы данных с созданием таблиц"""

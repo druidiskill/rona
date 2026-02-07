@@ -12,8 +12,12 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from telegram_bot.main import main
+from config import ADMIN_IDS_TG
 
-admins_ids = [447392189]
+def _parse_admin_ids(value: str):
+    return [int(x.strip()) for x in value.split(",") if x.strip().isdigit()]
+
+admins_ids = _parse_admin_ids(ADMIN_IDS_TG)
 
 if __name__ == "__main__":
     try:

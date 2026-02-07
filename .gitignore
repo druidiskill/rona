@@ -5,4 +5,5 @@
 !README.md
 *pyc
 /venv/
-/config.py
+.env*
+/tests/

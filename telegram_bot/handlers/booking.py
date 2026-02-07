@@ -1,4 +1,4 @@
-from aiogram import Dispatcher, F
+﻿from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -1180,6 +1180,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
 {booking_data['name']}
 email: {booking_data.get('email', 'не указан')}
 {booking_data['phone']}
+Telegram ID: {telegram_id}
 
 <b>Какой зал вы хотите забронировать?</b>
 {service_name}
@@ -1219,93 +1220,55 @@ email: {booking_data.get('email', 'не указан')}
     else:
         print(f"[WARNING] Календарь недоступен. CALENDAR_AVAILABLE={CALENDAR_AVAILABLE}, GoogleCalendarService={GoogleCalendarService}")
     
-    # Сохраняем бронирование в базу данных
+        # Обновляем/создаем клиента в базе (без хранения бронирования)
     try:
-        from database import client_repo, booking_repo
-        
-        # Получаем telegram_id из callback
+        from database import client_repo
+        from database.models import Client
+
         telegram_id = callback.from_user.id
-        
-        # Создаем или находим клиента по telegram_id
-        client = await client_repo.get_by_telegram_id(telegram_id)
-        
-        # Форматируем номер телефона в формат 10 цифр (убираем +7)
         phone_clean = booking_data['phone'].replace('+7 ', '').replace(' ', '').replace('-', '')
         if len(phone_clean) == 11 and phone_clean.startswith('7'):
-            phone_clean = phone_clean[1:]  # Убираем первую 7
-        
+            phone_clean = phone_clean[1:]
+
+        client = await client_repo.get_by_telegram_id(telegram_id)
         if not client:
-            # Создаем нового клиента
-            from database.models import Client
-            new_client = Client(
-                telegram_id=telegram_id,
-                name=booking_data['name'],
-                phone=phone_clean,
-                email=booking_data.get('email')
+            client_id = await client_repo.create(
+                Client(
+                    telegram_id=telegram_id,
+                    name=booking_data['name'],
+                    phone=phone_clean,
+                    email=booking_data.get('email'),
+                )
             )
-            client_id = await client_repo.create(new_client)
-            # Получаем созданного клиента
             client = await client_repo.get_by_id(client_id)
         else:
-            # Обновляем существующего клиента
             client.name = booking_data['name']
             client.phone = phone_clean
             if booking_data.get('email'):
                 client.email = booking_data.get('email')
             await client_repo.update(client)
-        
-        # Создаем бронирование
-        from database.models import Booking, BookingStatus
-        # Рассчитываем num_durations на основе продолжительности и шага услуги
-        service = await service_repo.get_by_id(service_id)
-        duration_minutes = booking_data.get('duration', 60)
-        if service:
-            # Вычисляем количество шагов продолжительности
-            num_durations = max(1, (duration_minutes - service.min_duration_minutes) // service.duration_step_minutes + 1)
-        else:
-            num_durations = 1  # Fallback
-        
-        booking = Booking(
-            service_id=service_id,
-            client_id=client.id,
-            start_time=selected_datetime,  # Объединяем дату и время
-            num_clients=booking_data['guests_count'],
-            num_durations=num_durations,
-            status=BookingStatus.CONFIRMED,
-            all_price=0.0  # Пока без расчета цены
-        )
-        
-        created_booking = await booking_repo.create(booking)
-        
-        # Отправляем подтверждение
-        await callback.message.edit_text(
-            f"✅ <b>Бронирование подтверждено!</b>\n\n"
-            f"📅 <b>Дата:</b> {selected_date.strftime('%d.%m.%Y')}\n"
-            f"🕒 <b>Время:</b> {booking_data['time']}\n"
-            f"👤 <b>Клиент:</b> {booking_data['name']}\n"
-            f"📱 <b>Телефон:</b> {booking_data['phone']}\n"
-            f"👥 <b>Гостей:</b> {booking_data['guests_count']}\n"
-            f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n\n"
-            f"🎯 <b>Услуга:</b> {service_name}\n\n"
-            f"📝 <b>Событие создано в календаре</b>\n"
-            f"💾 <b>Данные сохранены в базе</b>\n\n"
-            f"Спасибо за бронирование! Мы свяжемся с вами для подтверждения деталей.",
-            reply_markup=get_main_menu_keyboard(),
-            parse_mode="HTML"
-        )
-        
-        # Очищаем состояние
-        await state.clear()
-        
-    except Exception as e:
-        print(f"Ошибка сохранения в БД: {e}")
-        await callback.answer(
-            "❌ <b>Ошибка сохранения данных</b>\n\n"
-            "Бронирование не может быть завершено. "
-            "Попробуйте позже или свяжитесь с нами.",
-            show_alert=True
-        )
 
+    except Exception as e:
+        print(f"Ошибка обновления клиента в БД: {e}")
+
+    # Отправляем подтверждение
+    await callback.message.edit_text(
+        f"✅ <b>Бронирование подтверждено!</b>\n\n"
+        f"📅 <b>Дата:</b> {selected_date.strftime('%d.%m.%Y')}\n"
+        f"🕒 <b>Время:</b> {booking_data['time']}\n"
+        f"👤 <b>Клиент:</b> {booking_data['name']}\n"
+        f"📱 <b>Телефон:</b> {booking_data['phone']}\n"
+        f"👥 <b>Гостей:</b> {booking_data['guests_count']}\n"
+        f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n\n"
+        f"🎯 <b>Услуга:</b> {service_name}\n\n"
+        f"📅 <b>Событие создано в календаре</b>\n\n"
+        f"Спасибо за бронирование! Мы свяжемся с вами для подтверждения деталей.",
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+    # Очищаем состояние
+    await state.clear()
 async def cancel_booking(callback: CallbackQuery, state: FSMContext):
     """Отмена бронирования"""
     await state.clear()

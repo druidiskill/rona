@@ -1,11 +1,21 @@
-from aiogram import Dispatcher, F
+﻿from aiogram import Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
+from datetime import datetime, timedelta
 
 from telegram_bot.keyboards import get_main_menu_keyboard, get_services_keyboard
 from telegram_bot.states import BookingStates
 from database import client_service, service_repo
+
+# Опциональный импорт Google Calendar
+try:
+    from google_calendar.calendar_service import GoogleCalendarService
+    CALENDAR_AVAILABLE = True
+except Exception as e:
+    GoogleCalendarService = None
+    CALENDAR_AVAILABLE = False
+    print(f"[WARNING] Google Calendar недоступен: {e}")
 
 async def start_command(message: Message, state: FSMContext, is_admin: bool = False):
     """Обработчик команды /start"""
@@ -49,28 +59,61 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             reply_markup=get_services_keyboard(services)
         )
     elif callback.data == "my_bookings":
-        # Показываем бронирования клиента
-        client = await client_service.get_or_create_client(telegram_id=callback.from_user.id)
-        bookings = await client_service.get_client_bookings(client.id)
-        
-        if not bookings:
+        if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+            await callback.message.edit_text(
+                "📅 <b>Ваши бронирования</b>\n\n"
+                "Google Calendar недоступен. Проверьте настройки и токены.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+            return
+
+        # Показываем бронирования клиента из календаря
+        user_id = callback.from_user.id
+        now = datetime.now()
+        period_end = now + timedelta(days=90)
+
+        try:
+            calendar_service = GoogleCalendarService()
+            events = await calendar_service.list_events(now, period_end)
+        except Exception as e:
+            print(f"Ошибка получения событий календаря: {e}")
+            await callback.message.edit_text(
+                "📅 <b>Ваши бронирования</b>\n\n"
+                "Не удалось получить данные из календаря.",
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
+            )
+            return
+
+        needle = f"Telegram ID: {user_id}"
+        user_events = [
+            event for event in events
+            if needle in (event.get(\"description\") or \"\")
+        ]
+
+        if not user_events:
             await callback.message.edit_text(
                 "📅 <b>Ваши бронирования</b>\n\nУ вас пока нет бронирований.",
-                reply_markup=get_main_menu_keyboard()
+                reply_markup=get_main_menu_keyboard(),
+                parse_mode="HTML"
             )
-        else:
-            text = "📅 <b>Ваши бронирования:</b>\n\n"
-            for booking_detail in bookings:
-                text += f"📸 {booking_detail.service.name}\n"
-                text += f"📅 {booking_detail.booking.start_time.strftime('%d.%m.%Y %H:%M')}\n"
-                text += f"👥 {booking_detail.booking.num_clients} чел.\n"
-                text += f"💰 {booking_detail.booking.all_price} руб.\n"
-                text += f"📊 Статус: {booking_detail.booking.status.value}\n\n"
-            
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_main_menu_keyboard()
-            )
+            return
+
+        text = "📅 <b>Ваши бронирования:</b>\n\n"
+        for event in user_events:
+            start = event.get("start")
+            if not start:
+                continue
+            summary = event.get("summary", "Без названия")
+            text += f"📸 {summary}\n"
+            text += f"📅 {start.strftime('%d.%m.%Y %H:%M')}\n\n"
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_main_menu_keyboard(),
+            parse_mode="HTML"
+        )
     elif callback.data == "contacts":
         # Показываем контакты
         await callback.message.edit_text(
