@@ -12,103 +12,39 @@
 - book_slot
 """
 import os
-import json
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Tuple
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-CREDENTIALS_FILE = r"C:\Users\dru_i_d\Desktop\PROJECTS\WORK\rona\calendar_properties_primary.json"
-TOKEN_FILE = r"C:\Users\dru_i_d\Desktop\PROJECTS\WORK\rona\calendar_properties_primary.json"
-
-
-def _load_json_objects(path: str) -> List[dict]:
-    """
-    В файле могут быть несколько JSON-объектов подряд.
-    Возвращает список объектов.
-    """
-    raw = open(path, "r", encoding="utf-8").read()
-    objs = []
-    buf = []
-    depth = 0
-    in_str = False
-    esc = False
-
-    for ch in raw:
-        buf.append(ch)
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == "\"":
-                in_str = False
-            continue
-
-        if ch == "\"":
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                block = "".join(buf).strip()
-                if block:
-                    try:
-                        objs.append(json.loads(block))
-                    except json.JSONDecodeError:
-                        pass
-                buf = []
-
-    return objs
+CREDENTIALS_FILE = "calendar_properties_primary.json"
+TOKEN_FILE = "calendar_properties_primary.json"
 
 
 def build_calendar_service():
-    """Создает Google Calendar API service с OAuth или service account."""
+    """Создает Google Calendar API service с OAuth."""
     creds = None
     if os.path.exists(TOKEN_FILE):
-        # Файл может содержать service account, installed или token.
-        objs = _load_json_objects(TOKEN_FILE)
-        for obj in objs:
-            if isinstance(obj, dict) and obj.get("type") == "service_account":
-                creds = service_account.Credentials.from_service_account_info(
-                    obj, scopes=SCOPES
-                )
-                break
-        if not creds:
-            # Ищем сохраненный токен OAuth
-            for obj in objs:
-                if isinstance(obj, dict) and obj.get("token"):
-                    creds = Credentials.from_authorized_user_info(obj, SCOPES)
-                    break
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError(f"Не найден {CREDENTIALS_FILE}.")
-            # Пробуем вытащить OAuth client из файла, если он там есть.
-            objs = _load_json_objects(CREDENTIALS_FILE)
-            client = None
-            for obj in objs:
-                if isinstance(obj, dict) and "installed" in obj:
-                    client = obj
-                    break
-            if client:
-                flow = InstalledAppFlow.from_client_config(client, SCOPES)
-                creds = flow.run_local_server(port=0)
-            else:
-                # Если client не найден, используем service account (если он был)
-                # либо оставляем ошибку авторизации.
-                if not creds:
-                    raise ValueError("Не удалось найти OAuth client или service account в файле.")
+                raise FileNotFoundError(
+                    f"Не найден {CREDENTIALS_FILE}. Создай OAuth credentials.json в google_calendar/"
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+
+        with open(TOKEN_FILE, "w", encoding="utf-8") as token:
+            token.write(creds.to_json())
 
     return build("calendar", "v3", credentials=creds)
 
