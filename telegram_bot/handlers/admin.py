@@ -57,56 +57,35 @@ async def admin_bookings(callback: CallbackQuery, is_admin: bool):
     if not is_admin:
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
-    
-    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
-        await callback.message.edit_text(
-            "📅 <b>Бронирования на неделю</b>\n\n"
-            "Google Calendar недоступен. Проверьте настройки и токены.",
-            reply_markup=get_admin_keyboard(),
-            parse_mode="HTML"
-        )
-        return
 
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    week_later = today + timedelta(days=7)
+    text = (
+        "📅 <b>Управление бронированиями</b>\n\n"
+        "Выберите период или выполните поиск."
+    )
 
-    try:
-        calendar_service = GoogleCalendarService()
-        events = await calendar_service.list_events(today, week_later)
-    except Exception as e:
-        print(f"Ошибка получения событий календаря: {e}")
-        await callback.message.edit_text(
-            "📅 <b>Бронирования на неделю</b>\n\n"
-            "Не удалось получить данные из календаря.",
-            reply_markup=get_admin_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-
-    if not events:
-        await callback.message.edit_text(
-            "📅 <b>Бронирования на неделю</b>\n\n"
-            "Нет бронирований на ближайшие 7 дней.",
-            reply_markup=get_admin_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-
-    bookings_text = "📅 <b>Бронирования на неделю:</b>\n\n"
-    shown = 0
-    for event in events:
-        if shown >= 10:
-            break
-        start = event.get("start")
-        if not start:
-            continue
-        summary = event.get("summary", "Без названия")
-        bookings_text += f"{start.strftime('%d.%m %H:%M')} — {summary}\n"
-        shown += 1
+    if CALENDAR_AVAILABLE and GoogleCalendarService:
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        week_later = today + timedelta(days=7)
+        try:
+            calendar_service = GoogleCalendarService()
+            events = await calendar_service.list_events(today, week_later, max_results=3)
+            if events:
+                text += "\n\n<b>Ближайшие бронирования:</b>\n"
+                for event in events:
+                    start = event.get("start")
+                    if not start:
+                        continue
+                    summary = event.get("summary", "Без названия")
+                    text += f"• {start.strftime('%d.%m %H:%M')} — {summary}\n"
+        except Exception as e:
+            print(f"Ошибка получения событий календаря: {e}")
+            text += "\n\n⚠️ Не удалось получить данные из календаря."
+    else:
+        text += "\n\n⚠️ Google Calendar недоступен."
 
     await callback.message.edit_text(
-        bookings_text,
-        reply_markup=get_admin_keyboard(),
+        text,
+        reply_markup=get_bookings_management_keyboard(),
         parse_mode="HTML"
     )
 
@@ -291,6 +270,139 @@ async def bookings_tomorrow(callback: CallbackQuery, is_admin: bool):
         parse_mode="HTML"
     )
 
+async def bookings_week(callback: CallbackQuery, is_admin: bool):
+    """Бронирования на неделю"""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_later = today + timedelta(days=7)
+
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        await callback.message.edit_text(
+            "📅 <b>Бронирования на неделю</b>\n\n"
+            "Google Calendar недоступен. Проверьте настройки и токены.",
+            reply_markup=get_bookings_management_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        calendar_service = GoogleCalendarService()
+        events = await calendar_service.list_events(today, week_later, max_results=100)
+    except Exception as e:
+        print(f"Ошибка получения событий календаря: {e}")
+        await callback.message.edit_text(
+            "📅 <b>Бронирования на неделю</b>\n\n"
+            "Не удалось получить данные из календаря.",
+            reply_markup=get_bookings_management_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    if not events:
+        await callback.message.edit_text(
+            "📅 <b>Бронирования на неделю</b>\n\n"
+            "На ближайшие 7 дней бронирований нет.",
+            reply_markup=get_bookings_management_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    bookings_text = "📅 <b>Бронирования на неделю:</b>\n\n"
+    for event in events:
+        start = event.get("start")
+        if not start:
+            continue
+        summary = event.get("summary", "Без названия")
+        bookings_text += f"🕐 {start.strftime('%d.%m %H:%M')} — {summary}\n"
+
+    await callback.message.edit_text(
+        bookings_text,
+        reply_markup=get_bookings_management_keyboard(),
+        parse_mode="HTML"
+    )
+
+async def search_bookings(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Запуск поиска бронирований по тексту"""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_for_booking_search_query)
+    await callback.message.edit_text(
+        "🔍 <b>Поиск бронирований</b>\n\n"
+        "Введите текст для поиска (имя, телефон, услуга или часть описания).",
+        reply_markup=get_bookings_management_keyboard(),
+        parse_mode="HTML"
+    )
+
+async def process_search_bookings_query(message: Message, state: FSMContext, is_admin: bool):
+    """Поиск бронирований по введенному тексту"""
+    if not is_admin:
+        await state.clear()
+        await message.answer("У вас нет прав администратора")
+        return
+
+    query = (message.text or "").strip()
+    if len(query) < 2:
+        await message.answer("❌ Введите минимум 2 символа для поиска.")
+        return
+
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        await state.clear()
+        await message.answer(
+            "Google Calendar недоступен. Проверьте настройки и токены.",
+            reply_markup=get_bookings_management_keyboard()
+        )
+        return
+
+    now = datetime.now()
+    period_start = now - timedelta(days=30)
+    period_end = now + timedelta(days=180)
+
+    try:
+        calendar_service = GoogleCalendarService()
+        events = await calendar_service.list_events(
+            period_start,
+            period_end,
+            query=query,
+            max_results=30
+        )
+    except Exception as e:
+        print(f"Ошибка поиска событий календаря: {e}")
+        await state.clear()
+        await message.answer(
+            "❌ Ошибка поиска в календаре. Попробуйте позже.",
+            reply_markup=get_bookings_management_keyboard()
+        )
+        return
+
+    if not events:
+        await state.clear()
+        await message.answer(
+            f"🔍 По запросу <b>{query}</b> ничего не найдено.",
+            reply_markup=get_bookings_management_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    result_text = f"🔍 <b>Результаты поиска: {query}</b>\n\n"
+    for event in events:
+        start = event.get("start")
+        if not start:
+            continue
+        summary = event.get("summary", "Без названия")
+        result_text += f"🕐 {start.strftime('%d.%m %H:%M')} — {summary}\n"
+
+    await state.clear()
+    await message.answer(
+        result_text,
+        reply_markup=get_bookings_management_keyboard(),
+        parse_mode="HTML"
+    )
+
 async def admin_access_denied(message: Message, is_admin: bool):
     """Обработка доступа к админ-функциям"""
     if not is_admin:
@@ -311,3 +423,6 @@ def register_admin_handlers(dp: Dispatcher):
     dp.callback_query.register(admin_admins, F.data == "admin_admins")
     dp.callback_query.register(bookings_today, F.data == "bookings_today")
     dp.callback_query.register(bookings_tomorrow, F.data == "bookings_tomorrow")
+    dp.callback_query.register(bookings_week, F.data == "bookings_week")
+    dp.callback_query.register(search_bookings, F.data == "search_bookings")
+    dp.message.register(process_search_bookings_query, AdminStates.waiting_for_booking_search_query)

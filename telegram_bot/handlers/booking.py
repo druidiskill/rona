@@ -19,6 +19,46 @@ except ImportError as e:
     print(f"[WARNING] Google Calendar недоступен: {e}")
     print("[INFO] Установите зависимости: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
 
+def _build_default_time_slots() -> list[dict]:
+    """Стандартные слоты 9:00-21:00 при недоступности календаря."""
+    time_slots = []
+    for hour in range(9, 21):
+        time_slots.append({
+            "start_time": datetime.strptime(f"{hour:02d}:00", "%H:%M").time(),
+            "end_time": datetime.strptime(f"{hour+1:02d}:00", "%H:%M").time(),
+            "is_available": True
+        })
+    return time_slots
+
+async def _get_time_slots_for_date(target_date: date) -> tuple[list[dict], bool, str | None]:
+    """
+    Возвращает:
+    - time_slots
+    - used_calendar: True, если пытались брать слоты из календаря
+    - error_text: текст ошибки календаря (если была)
+    """
+    if CALENDAR_AVAILABLE and GoogleCalendarService:
+        try:
+            calendar_service = GoogleCalendarService()
+            available_slots = await calendar_service.get_free_slots(
+                date=target_date,
+                duration_minutes=60
+            )
+            slots = [
+                {
+                    "start_time": slot["start"].time(),
+                    "end_time": slot["end"].time(),
+                    "is_available": True
+                }
+                for slot in available_slots
+            ]
+            return slots, True, None
+        except Exception as e:
+            print(f"Ошибка получения слотов из Google Calendar: {e}")
+            return _build_default_time_slots(), False, str(e)
+
+    return _build_default_time_slots(), False, None
+
 
 async def start_booking(callback: CallbackQuery, state: FSMContext):
     """Начало бронирования"""
@@ -168,66 +208,30 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
         return
     
     try:
-        # Получаем доступные временные слоты из Google Calendar
-        if CALENDAR_AVAILABLE and GoogleCalendarService:
-            calendar_service = GoogleCalendarService()
-            selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
-            start_of_day = datetime.combine(selected_date_obj, datetime.min.time())
-            end_of_day = datetime.combine(selected_date_obj, datetime.max.time())
-            
-            # Получаем свободные слоты по 1 часу (60 минут)
-            available_slots = await calendar_service.get_free_slots(
-                date=selected_date_obj,
-                duration_minutes=60  # Фиксированно 1 час
-            )
-            
-            if not available_slots:
-                await callback.message.edit_text(
-                    f"❌ <b>На {selected_date_obj.strftime('%d.%m.%Y')} нет свободных слотов</b>\n\n"
-                    "Попробуйте выбрать другую дату.",
-                    reply_markup=get_booking_form_keyboard(service_id, booking_data),
-                    parse_mode="HTML"
-                )
-                return
-            
-            # Создаем временные слоты
-            time_slots = []
-            for slot in available_slots:
-                time_slots.append({
-                    'start_time': slot['start'].time(),
-                    'end_time': slot['end'].time(),
-                    'is_available': True
-                })
-        else:
-            # Если календарь недоступен, создаем стандартные слоты (9:00 - 21:00)
-            selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
-            time_slots = []
-            for hour in range(9, 21):
-                time_slots.append({
-                    'start_time': datetime.strptime(f"{hour:02d}:00", "%H:%M").time(),
-                    'end_time': datetime.strptime(f"{hour+1:02d}:00", "%H:%M").time(),
-                    'is_available': True
-                })
-        
-        # Сохраняем временные слоты в состоянии
-        await state.update_data(time_slots=time_slots)
-        
-        try:
+        selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(selected_date_obj)
+
+        if not time_slots and used_calendar:
             await callback.message.edit_text(
-                f"🕒 <b>Выберите время на {selected_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
-                "Доступные времена (слоты по 1 часу):",
-                reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
+                f"❌ <b>На {selected_date_obj.strftime('%d.%m.%Y')} нет свободных слотов</b>\n\n"
+                "Попробуйте выбрать другую дату.",
+                reply_markup=get_booking_form_keyboard(service_id, booking_data),
                 parse_mode="HTML"
             )
-        except Exception as e:
-            if "message is not modified" in str(e):
-                await callback.answer("Время уже выбрано")
-            else:
-                print(f"Ошибка редактирования сообщения: {e}")
-                await callback.answer("Ошибка обновления сообщения", show_alert=True)
-        
+            return
+
+        if calendar_error:
+            await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
+
+        await state.update_data(time_slots=time_slots)
+        await callback.message.edit_text(
+            f"🕒 <b>Выберите время на {selected_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
+            "Доступные времена (слоты по 1 часу):",
+            reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
+            parse_mode="HTML"
+        )
     except Exception as e:
-        print(f"Ошибка получения данных из Google Calendar: {e}")
+        print(f"Ошибка выбора времени: {e}")
         await callback.message.edit_text(
             f"❌ <b>Ошибка получения доступного времени</b>\n\n"
             "Попробуйте позже или выберите другую дату.",
@@ -294,18 +298,11 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
         booking_data['service_name'] = data.get('service_name', '')
     await state.update_data(booking_data=booking_data)
     
-    # Получаем временные слоты для новой даты
     try:
-        if CALENDAR_AVAILABLE and GoogleCalendarService:
-            calendar_service = GoogleCalendarService()
-            prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
-            
-            available_slots = await calendar_service.get_free_slots(
-                date=prev_date_obj,
-                duration_minutes=60
-        )
-        
-        if not available_slots:
+        prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(prev_date_obj)
+
+        if not time_slots and used_calendar:
             await callback.message.edit_text(
                 f"❌ <b>На {prev_date_obj.strftime('%d.%m.%Y')} нет свободных слотов</b>\n\n"
                 "Попробуйте выбрать другую дату.",
@@ -313,38 +310,19 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML"
             )
             return
-        
-        # Создаем временные слоты
-        time_slots = []
-        for slot in available_slots:
-            time_slots.append({
-                'start_time': slot['start'].time(),
-                'end_time': slot['end'].time(),
-                'is_available': True
-            })
-        else:
-            # Если календарь недоступен, создаем стандартные слоты (9:00 - 21:00)
-            prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
-            time_slots = []
-            for hour in range(9, 21):
-                time_slots.append({
-                    'start_time': datetime.strptime(f"{hour:02d}:00", "%H:%M").time(),
-                    'end_time': datetime.strptime(f"{hour+1:02d}:00", "%H:%M").time(),
-                    'is_available': True
-                })
-        
-        # Сохраняем временные слоты в состоянии
+
+        if calendar_error:
+            await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
+
         await state.update_data(time_slots=time_slots)
-        
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {prev_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
             "Доступные времена (слоты по 1 часу):",
             reply_markup=get_time_selection_keyboard(service_id, time_slots, prev_date),
             parse_mode="HTML"
         )
-        
     except Exception as e:
-        print(f"Ошибка получения данных из Google Calendar: {e}")
+        print(f"Ошибка получения времени для предыдущей даты: {e}")
         await callback.message.edit_text(
             f"❌ <b>Ошибка получения доступного времени</b>\n\n"
             "Попробуйте позже или выберите другую дату.",
@@ -367,18 +345,11 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
         booking_data['service_name'] = data.get('service_name', '')
     await state.update_data(booking_data=booking_data)
     
-    # Получаем временные слоты для новой даты
     try:
-        if CALENDAR_AVAILABLE and GoogleCalendarService:
-            calendar_service = GoogleCalendarService()
-            next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
-            
-            available_slots = await calendar_service.get_free_slots(
-                date=next_date_obj,
-                duration_minutes=60
-        )
-        
-        if not available_slots:
+        next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(next_date_obj)
+
+        if not time_slots and used_calendar:
             await callback.message.edit_text(
                 f"❌ <b>На {next_date_obj.strftime('%d.%m.%Y')} нет свободных слотов</b>\n\n"
                 "Попробуйте выбрать другую дату.",
@@ -386,38 +357,19 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML"
             )
             return
-        
-        # Создаем временные слоты
-        time_slots = []
-        for slot in available_slots:
-            time_slots.append({
-                'start_time': slot['start'].time(),
-                'end_time': slot['end'].time(),
-                'is_available': True
-            })
-        else:
-            # Если календарь недоступен, создаем стандартные слоты (9:00 - 21:00)
-            next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
-            time_slots = []
-            for hour in range(9, 21):
-                time_slots.append({
-                    'start_time': datetime.strptime(f"{hour:02d}:00", "%H:%M").time(),
-                    'end_time': datetime.strptime(f"{hour+1:02d}:00", "%H:%M").time(),
-                    'is_available': True
-                })
-        
-        # Сохраняем временные слоты в состоянии
+
+        if calendar_error:
+            await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
+
         await state.update_data(time_slots=time_slots)
-        
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {next_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
             "Доступные времена (слоты по 1 часу):",
             reply_markup=get_time_selection_keyboard(service_id, time_slots, next_date),
             parse_mode="HTML"
         )
-        
     except Exception as e:
-        print(f"Ошибка получения данных из Google Calendar: {e}")
+        print(f"Ошибка получения времени для следующей даты: {e}")
         await callback.message.edit_text(
             f"❌ <b>Ошибка получения доступного времени</b>\n\n"
             "Попробуйте позже или выберите другую дату.",
@@ -1083,6 +1035,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     """Подтверждение бронирования"""
     parts = callback.data.split("_")
     service_id = int(parts[2])
+    telegram_id = callback.from_user.id
     
     # Получаем данные из состояния
     data = await state.get_data()
@@ -1156,11 +1109,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Ошибка проверки доступности времени: {e}")
             await callback.answer(
-                "❌ <b>Ошибка проверки доступности</b>\n\n"
-                "Попробуйте позже или выберите другое время.",
-                show_alert=True
+                "⚠️ Не удалось проверить доступность времени. Продолжаем бронирование."
             )
-            return
     
     # Создаем событие в Google Calendar
     if CALENDAR_AVAILABLE and GoogleCalendarService:
@@ -1225,7 +1175,6 @@ Telegram ID: {telegram_id}
         from database import client_repo
         from database.models import Client
 
-        telegram_id = callback.from_user.id
         phone_clean = booking_data['phone'].replace('+7 ', '').replace(' ', '').replace('-', '')
         if len(phone_clean) == 11 and phone_clean.startswith('7'):
             phone_clean = phone_clean[1:]

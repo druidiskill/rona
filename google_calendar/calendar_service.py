@@ -17,9 +17,7 @@ from google_calendar.calendar_freebusy import (
 
 class GoogleCalendarService:
     def __init__(self, calendar_id: Optional[str] = None, time_zone: str = "Europe/Moscow"):
-        self.calendar_id = calendar_id or os.getenv("GOOGLE_CALENDAR_ID")
-        if not self.calendar_id:
-            raise ValueError("GOOGLE_CALENDAR_ID is not set")
+        self.calendar_id = calendar_id or os.getenv("GOOGLE_CALENDAR_ID") or "primary"
         self.time_zone = time_zone
         self._service = build_calendar_service()
 

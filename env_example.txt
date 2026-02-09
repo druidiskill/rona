@@ -1,0 +1,22 @@
+﻿# Telegram
+TELEGRAM_BOT_TOKEN=
+
+# VK
+VK_BOT_TOKEN=
+VK_GROUP_ID=
+
+# Google Calendar
+GOOGLE_CALENDAR_ID=
+GOOGLE_CREDENTIALS_FILE=calendar_properties_primary.json
+GOOGLE_TOKEN_FILE=calendar_properties_primary.json
+
+# Database
+DATABASE_URL=sqlite:///photostudio.db
+
+# Admin auth
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+
+# Admin IDs (comma-separated)
+ADMIN_IDS_TG=
+ADMIN_IDS_VK=

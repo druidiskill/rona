@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 
-from telegram_bot.keyboards import get_main_menu_keyboard, get_services_keyboard
+from telegram_bot.keyboards import get_main_menu_keyboard, get_services_keyboard, get_my_bookings_keyboard
 from telegram_bot.states import BookingStates
 from database import client_service, service_repo
 
@@ -59,11 +59,18 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             reply_markup=get_services_keyboard(services)
         )
     elif callback.data == "my_bookings":
+        await callback.message.edit_text(
+            "📅 <b>Мои бронирования</b>\n\n"
+            "Выберите раздел:",
+            reply_markup=get_my_bookings_keyboard(),
+            parse_mode="HTML"
+        )
+    elif callback.data in {"active_bookings", "booking_history"}:
         if not CALENDAR_AVAILABLE or not GoogleCalendarService:
             await callback.message.edit_text(
                 "📅 <b>Ваши бронирования</b>\n\n"
                 "Google Calendar недоступен. Проверьте настройки и токены.",
-                reply_markup=get_main_menu_keyboard(),
+                reply_markup=get_my_bookings_keyboard(),
                 parse_mode="HTML"
             )
             return
@@ -71,17 +78,26 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
         # Показываем бронирования клиента из календаря
         user_id = callback.from_user.id
         now = datetime.now()
-        period_end = now + timedelta(days=90)
+        if callback.data == "active_bookings":
+            period_start = now
+            period_end = now + timedelta(days=90)
+            title = "📅 <b>Активные бронирования:</b>\n\n"
+            empty_text = "📅 <b>Активные бронирования</b>\n\nУ вас пока нет активных бронирований."
+        else:
+            period_start = now - timedelta(days=180)
+            period_end = now
+            title = "📅 <b>История бронирований:</b>\n\n"
+            empty_text = "📅 <b>История бронирований</b>\n\nИстория пока пуста."
 
         try:
             calendar_service = GoogleCalendarService()
-            events = await calendar_service.list_events(now, period_end)
+            events = await calendar_service.list_events(period_start, period_end)
         except Exception as e:
             print(f"Ошибка получения событий календаря: {e}")
             await callback.message.edit_text(
                 "📅 <b>Ваши бронирования</b>\n\n"
                 "Не удалось получить данные из календаря.",
-                reply_markup=get_main_menu_keyboard(),
+                reply_markup=get_my_bookings_keyboard(),
                 parse_mode="HTML"
             )
             return
@@ -89,18 +105,18 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
         needle = f"Telegram ID: {user_id}"
         user_events = [
             event for event in events
-            if needle in (event.get(\"description\") or \"\")
+            if needle in (event.get("description") or "")
         ]
 
         if not user_events:
             await callback.message.edit_text(
-                "📅 <b>Ваши бронирования</b>\n\nУ вас пока нет бронирований.",
-                reply_markup=get_main_menu_keyboard(),
+                empty_text,
+                reply_markup=get_my_bookings_keyboard(),
                 parse_mode="HTML"
             )
             return
 
-        text = "📅 <b>Ваши бронирования:</b>\n\n"
+        text = title
         for event in user_events:
             start = event.get("start")
             if not start:
@@ -111,7 +127,7 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
 
         await callback.message.edit_text(
             text,
-            reply_markup=get_main_menu_keyboard(),
+            reply_markup=get_my_bookings_keyboard(),
             parse_mode="HTML"
         )
     elif callback.data == "contacts":
@@ -160,5 +176,5 @@ def register_start_handlers(dp: Dispatcher):
     dp.message.register(start_command, CommandStart())
     dp.message.register(help_command, Command("help"))
     dp.callback_query.register(main_menu_callback, F.data.in_([
-        "services", "my_bookings", "contacts", "back_to_main", "admin_panel"
+        "services", "my_bookings", "active_bookings", "booking_history", "contacts", "back_to_main", "admin_panel"
     ]))

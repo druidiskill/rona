@@ -38,3 +38,4 @@ class AdminStates(StatesGroup):
     waiting_for_edit_service_max_clients = State()
     waiting_for_edit_service_duration = State()
     waiting_for_edit_service_photos = State()
+    waiting_for_booking_search_query = State()

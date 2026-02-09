@@ -12,6 +12,7 @@
 - book_slot
 """
 import os
+import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
@@ -19,6 +20,7 @@ from typing import List, Dict, Tuple
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
@@ -33,25 +35,124 @@ TOKEN_FILE = os.getenv(
 )
 
 
+def _load_json_objects(path: str) -> List[dict]:
+    """
+    Загружает один или несколько JSON-объектов из файла.
+    Поддерживает "склеенные" JSON-объекты в одном файле.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read().strip()
+
+    if not raw:
+        return []
+
+    try:
+        parsed = json.loads(raw)
+        return [parsed] if isinstance(parsed, dict) else []
+    except Exception:
+        pass
+
+    decoder = json.JSONDecoder()
+    idx = 0
+    objs: List[dict] = []
+    length = len(raw)
+
+    while idx < length:
+        while idx < length and raw[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        obj, end = decoder.raw_decode(raw, idx)
+        if isinstance(obj, dict):
+            objs.append(obj)
+        idx = end
+
+    return objs
+
+
+def _extract_oauth_client_config(objs: List[dict]) -> dict | None:
+    for obj in objs:
+        if "installed" in obj or "web" in obj:
+            return obj
+    return None
+
+
+def _extract_token_payload(objs: List[dict]) -> dict | None:
+    for obj in objs:
+        if "token" in obj and "refresh_token" in obj and "client_id" in obj:
+            return obj
+    return None
+
+
+def _extract_service_account_payload(objs: List[dict]) -> dict | None:
+    for obj in objs:
+        if obj.get("type") == "service_account":
+            return obj
+    return None
+
+
+def _resolve_token_file() -> str:
+    # Если путь токена совпадает с credentials-файлом, используем sidecar-файл.
+    if os.path.abspath(TOKEN_FILE) == os.path.abspath(CREDENTIALS_FILE):
+        return f"{TOKEN_FILE}.token.json"
+    return TOKEN_FILE
+
+
 def build_calendar_service():
     """Создает Google Calendar API service с OAuth."""
+    token_file = _resolve_token_file()
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    # 1) Пытаемся загрузить OAuth token из token_file
+    if os.path.exists(token_file):
+        try:
+            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+        except Exception:
+            token_objs = _load_json_objects(token_file)
+            token_payload = _extract_token_payload(token_objs)
+            if token_payload:
+                creds = Credentials.from_authorized_user_info(token_payload, SCOPES)
+
+    # 2) Если token еще нет, пробуем извлечь его прямо из credentials-файла
+    if (not creds) and os.path.exists(CREDENTIALS_FILE):
+        creds_objs = _load_json_objects(CREDENTIALS_FILE)
+        token_payload = _extract_token_payload(creds_objs)
+        if token_payload:
+            creds = Credentials.from_authorized_user_info(token_payload, SCOPES)
+
+    # 3) Валидация/рефреш OAuth credentials
+    if creds and not creds.valid:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            with open(token_file, "w", encoding="utf-8") as token:
+                token.write(creds.to_json())
         else:
-            if not os.path.exists(CREDENTIALS_FILE):
-                raise FileNotFoundError(
-                    f"Не найден {CREDENTIALS_FILE}. Создай OAuth credentials.json в google_calendar/"
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
+            creds = None
 
-        with open(TOKEN_FILE, "w", encoding="utf-8") as token:
-            token.write(creds.to_json())
+    # 4) Если OAuth не поднялся, пробуем interactive OAuth client config
+    if not creds and os.path.exists(CREDENTIALS_FILE):
+        creds_objs = _load_json_objects(CREDENTIALS_FILE)
+        oauth_client_config = _extract_oauth_client_config(creds_objs)
+        if oauth_client_config:
+            flow = InstalledAppFlow.from_client_config(oauth_client_config, SCOPES)
+            creds = flow.run_local_server(port=0)
+            with open(token_file, "w", encoding="utf-8") as token:
+                token.write(creds.to_json())
+
+    # 5) Фолбек на service account
+    if not creds and os.path.exists(CREDENTIALS_FILE):
+        creds_objs = _load_json_objects(CREDENTIALS_FILE)
+        service_account_payload = _extract_service_account_payload(creds_objs)
+        if service_account_payload:
+            creds = service_account.Credentials.from_service_account_info(
+                service_account_payload,
+                scopes=SCOPES
+            )
+
+    if not creds:
+        raise FileNotFoundError(
+            f"Не удалось получить Google credentials. Проверьте {CREDENTIALS_FILE} и {token_file}"
+        )
 
     return build("calendar", "v3", credentials=creds)
 
