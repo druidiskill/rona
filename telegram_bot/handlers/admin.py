@@ -54,6 +54,18 @@ def _extract_booking_contact_details(description: str) -> dict:
         ),
     }
 
+
+def _normalize_phone(phone: str | None) -> str | None:
+    """Нормализует телефон к формату 10 цифр для поиска в clients.phone."""
+    if not phone:
+        return None
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) == 11 and digits.startswith(("7", "8")):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return digits
+    return None
+
 async def admin_panel(callback: CallbackQuery, is_admin: bool, parse_mode: str = "HTML"):
     """Админ-панель"""
     if not is_admin:
@@ -188,24 +200,37 @@ async def admin_booking_open(callback: CallbackQuery, is_admin: bool):
             text += f" - {end_dt.strftime('%H:%M')}"
         text += "\n"
 
-    # Для режима чата нужен numeric user_id; если есть только username, пробуем резолвнуть.
+    # Для режима чата нужен numeric user_id.
     chat_target_user_id = contact.get("telegram_id")
-    if (not chat_target_user_id) and contact.get("telegram_username"):
+    if not chat_target_user_id:
+        # Фолбек: ищем клиента в БД по телефону/email и берем его telegram_id.
         try:
-            chat = await callback.bot.get_chat(f"@{contact['telegram_username']}")
-            if chat and chat.id:
-                chat_target_user_id = str(chat.id)
+            phone_norm = _normalize_phone(contact.get("phone"))
+            db_client = None
+            if phone_norm:
+                db_client = await client_repo.get_by_phone(phone_norm)
+            if (not db_client) and contact.get("email"):
+                clients = await client_repo.get_all() if hasattr(client_repo, "get_all") else []
+                email_lc = contact["email"].strip().lower()
+                for c in clients:
+                    if c.email and c.email.strip().lower() == email_lc:
+                        db_client = c
+                        break
+            if db_client and db_client.telegram_id:
+                chat_target_user_id = str(db_client.telegram_id)
         except Exception as e:
-            print(f"Не удалось резолвнуть username @{contact['telegram_username']} в user_id: {e}")
+            print(f"Ошибка поиска клиента в БД для внутреннего чата: {e}")
 
     text += "\n📞 <b>Данные для связи</b>\n"
     text += f"👤 <b>Клиент:</b> {contact['name'] or 'Не указан'}\n"
     text += f"📱 <b>Телефон:</b> {contact['phone'] or 'Не указан'}\n"
     text += f"📧 <b>Email:</b> {contact['email'] or 'Не указан'}\n"
+    if not chat_target_user_id:
+        text += "⚠️ <i>Для этого бронирования внутренний чат недоступен: не найден Telegram ID клиента.</i>\n"
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_admin_booking_detail_keyboard(chat_target_user_id),
+        reply_markup=get_admin_booking_detail_keyboard(chat_target_user_id, None),
         parse_mode="HTML"
     )
 

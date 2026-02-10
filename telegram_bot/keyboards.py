@@ -282,11 +282,16 @@ def get_admin_future_bookings_keyboard(events: list[dict]) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_admin_booking_detail_keyboard(telegram_user_id: str | None = None) -> InlineKeyboardMarkup:
+def get_admin_booking_detail_keyboard(
+    telegram_user_id: str | None = None,
+    telegram_username: str | None = None
+) -> InlineKeyboardMarkup:
     """Клавиатура карточки бронирования для админа."""
     keyboard = []
     if telegram_user_id:
         keyboard.append([InlineKeyboardButton(text="💬 Связаться", callback_data=f"support_reply_{telegram_user_id}")])
+    elif telegram_username:
+        keyboard.append([InlineKeyboardButton(text="💬 Связаться", callback_data=f"support_reply_username_{telegram_username}")])
 
     keyboard.extend([
         [InlineKeyboardButton(text="🔙 К списку бронирований", callback_data="admin_bookings")],

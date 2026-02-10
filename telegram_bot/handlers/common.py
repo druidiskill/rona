@@ -217,6 +217,39 @@ async def support_reply_callback(callback: CallbackQuery, state: FSMContext):
         pass
     await callback.answer()
 
+async def support_reply_username_callback(callback: CallbackQuery, state: FSMContext):
+    """Админ нажал Ответить по username."""
+    username = callback.data.replace("support_reply_username_", "", 1).strip()
+    if not username:
+        await callback.answer("Ошибка в данных", show_alert=True)
+        return
+
+    try:
+        chat = await callback.bot.get_chat(f"@{username}")
+        user_id = chat.id
+    except Exception as e:
+        await callback.answer("Не удалось найти чат пользователя", show_alert=True)
+        print(f"Ошибка resolve username @{username}: {e}")
+        return
+
+    await state.set_state(SupportStates.admin_reply)
+    await state.update_data(support_reply_user_id=user_id)
+    sent = await callback.message.answer(
+        "✍️ Напишите ответ пользователю. Чтобы выйти из режима ответа, отправьте /stop.",
+        parse_mode="HTML"
+    )
+    try:
+        await support_repo.add_message(
+            user_id=user_id,
+            chat_id=callback.message.chat.id,
+            message_id=sent.message_id,
+            role="bot",
+            text="Ответ админа: ввод",
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
 
 async def support_admin_message(message: Message, state: FSMContext):
     """Сообщение администратора в ответ пользователю"""
@@ -422,6 +455,7 @@ def register_common_handlers(dp: Dispatcher):
     dp.callback_query.register(back_to_services_management_callback, F.data == "admin_services")
     dp.callback_query.register(back_to_bookings_management_callback, F.data == "admin_bookings")
     dp.callback_query.register(support_end_callback, F.data == "support_end")
+    dp.callback_query.register(support_reply_username_callback, F.data.startswith("support_reply_username_"))
     dp.callback_query.register(support_reply_callback, F.data.startswith("support_reply_"))
 
     dp.message.register(support_user_message, SupportStates.user_chat)
