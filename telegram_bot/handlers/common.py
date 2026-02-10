@@ -36,7 +36,8 @@ async def help_callback(callback: CallbackQuery):
     
     await callback.message.edit_text(
         help_text,
-        reply_markup=get_main_menu_keyboard()
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML"
     )
 
 async def unknown_message(message: Message):
@@ -44,7 +45,8 @@ async def unknown_message(message: Message):
     await message.answer(
         "🤔 <b>Не понимаю команду</b>\n\n"
         "Используйте кнопки меню или команду /start для начала работы.",
-        reply_markup=get_main_menu_keyboard()
+        reply_markup=get_main_menu_keyboard(),
+        parse_mode="HTML"
     )
 
 async def back_to_main_callback(callback: CallbackQuery, is_admin: bool = False):

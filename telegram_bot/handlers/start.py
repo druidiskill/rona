@@ -26,11 +26,17 @@ async def start_command(message: Message, state: FSMContext, is_admin: bool = Fa
         telegram_id=message.from_user.id,
         name=message.from_user.full_name or "Пользователь"
     )
+
+    greeting_name = (
+        client.name
+        if client and client.name and client.name.strip() and client.name != "Пользователь"
+        else (message.from_user.first_name or "Пользователь")
+    )
     
     welcome_text = f"""
 🎉 <b>Добро пожаловать в фотостудию!</b>
 
-Привет, {message.from_user.first_name}! 👋
+Привет, {greeting_name}! 👋
 
 Выберите действие в меню ниже:
     """
@@ -57,7 +63,8 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
         services = await service_repo.get_all_active()
         await callback.message.edit_text(
             "📸 <b>Наши услуги:</b>\n\nВыберите услугу для бронирования:",
-            reply_markup=get_services_keyboard(services)
+            reply_markup=get_services_keyboard(services),
+            parse_mode="HTML"
         )
     elif callback.data == "my_bookings":
         await callback.message.edit_text(
