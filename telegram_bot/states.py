@@ -39,3 +39,9 @@ class AdminStates(StatesGroup):
     waiting_for_edit_service_duration = State()
     waiting_for_edit_service_photos = State()
     waiting_for_booking_search_query = State()
+
+
+class SupportStates(StatesGroup):
+    """Состояния поддержки"""
+    user_chat = State()
+    admin_reply = State()

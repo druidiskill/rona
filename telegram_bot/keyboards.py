@@ -189,6 +189,13 @@ def get_services_management_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
+def get_support_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
+    """Главное меню с кнопкой завершения диалога поддержки"""
+    keyboard = get_main_menu_keyboard(is_admin).inline_keyboard
+    keyboard.append([InlineKeyboardButton(text="✅ Закончить диалог", callback_data="support_end")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 def get_bookings_management_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура управления бронированиями"""
     keyboard = [
