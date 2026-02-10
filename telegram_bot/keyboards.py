@@ -260,6 +260,70 @@ def get_my_bookings_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
+def get_admin_future_bookings_keyboard(events: list[dict]) -> InlineKeyboardMarkup:
+    """Клавиатура списка будущих бронирований для админа."""
+    keyboard = []
+    for event in events:
+        event_id = event.get("id")
+        start = event.get("start")
+        summary = event.get("summary", "Без названия")
+        if not event_id or not start:
+            continue
+        button_text = f"🕐 {start.strftime('%d.%m %H:%M')} — {summary}"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=button_text[:64],
+                callback_data=f"admin_booking_open_{event_id}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_admin_booking_detail_keyboard(telegram_user_id: str | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура карточки бронирования для админа."""
+    keyboard = []
+    if telegram_user_id:
+        keyboard.append([InlineKeyboardButton(text="💬 Связаться", callback_data=f"support_reply_{telegram_user_id}")])
+
+    keyboard.extend([
+        [InlineKeyboardButton(text="🔙 К списку бронирований", callback_data="admin_bookings")],
+        [InlineKeyboardButton(text="🔙 В админ-панель", callback_data="admin_panel")]
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_active_bookings_list_keyboard(events: list[dict]) -> InlineKeyboardMarkup:
+    """Клавиатура списка активных бронирований пользователя."""
+    keyboard = []
+    for event in events:
+        event_id = event.get("id")
+        start = event.get("start")
+        summary = event.get("summary", "Без названия")
+        if not event_id or not start:
+            continue
+        button_text = f"✏️ {start.strftime('%d.%m %H:%M')} — {summary}"
+        keyboard.append([
+            InlineKeyboardButton(
+                text=button_text[:64],
+                callback_data=f"active_booking_open_{event_id}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="my_bookings")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_active_booking_actions_keyboard(event_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура действий по активной брони пользователя."""
+    keyboard = [
+        [InlineKeyboardButton(text="❌ Отменить бронирование", callback_data=f"active_booking_cancel_{event_id}")],
+        [InlineKeyboardButton(text="🔙 К активным", callback_data="active_bookings")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 def get_clients_management_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура управления клиентами"""
     keyboard = [

@@ -1,8 +1,16 @@
 from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
+import re
 
-from telegram_bot.keyboards import get_admin_keyboard, get_main_menu_keyboard, get_services_management_keyboard, get_bookings_management_keyboard
+from telegram_bot.keyboards import (
+    get_admin_keyboard,
+    get_main_menu_keyboard,
+    get_services_management_keyboard,
+    get_bookings_management_keyboard,
+    get_admin_future_bookings_keyboard,
+    get_admin_booking_detail_keyboard,
+)
 from telegram_bot.states import AdminStates
 from database import admin_repo, service_repo, client_repo
 from datetime import datetime, timedelta
@@ -15,6 +23,36 @@ except Exception as e:
     GoogleCalendarService = None
     CALENDAR_AVAILABLE = False
     print(f"[WARNING] Google Calendar недоступен: {e}")
+
+
+def _extract_booking_contact_details(description: str) -> dict:
+    """Извлекает контактные данные клиента из описания события календаря."""
+    text = re.sub(r"<[^>]+>", "", description or "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    name = None
+    for i, line in enumerate(lines):
+        if line.lower() == "кто забронировал" and i + 1 < len(lines):
+            name = lines[i + 1]
+            break
+
+    email_match = re.search(r"[\w.\-+%]+@[\w.\-]+\.\w+", text)
+    phone_match = re.search(r"(\+?\d[\d\-\s\(\)]{8,}\d)", text)
+    tg_id_match = re.search(r"Telegram ID:\s*(\d+)", text, flags=re.IGNORECASE)
+    tg_link_match = re.search(r"https?://t\.me/([A-Za-z0-9_]{5,32})", text, flags=re.IGNORECASE)
+    tg_username_match = re.search(r"(?:^|\s)@([A-Za-z0-9_]{5,32})(?:\s|$)", text)
+
+    return {
+        "name": name,
+        "email": email_match.group(0) if email_match else None,
+        "phone": phone_match.group(1) if phone_match else None,
+        "telegram_id": tg_id_match.group(1) if tg_id_match else None,
+        "telegram_username": (
+            tg_link_match.group(1)
+            if tg_link_match
+            else (tg_username_match.group(1) if tg_username_match else None)
+        ),
+    }
 
 async def admin_panel(callback: CallbackQuery, is_admin: bool, parse_mode: str = "HTML"):
     """Админ-панель"""
@@ -58,34 +96,116 @@ async def admin_bookings(callback: CallbackQuery, is_admin: bool):
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
 
-    text = (
-        "📅 <b>Управление бронированиями</b>\n\n"
-        "Выберите период или выполните поиск."
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        await callback.message.edit_text(
+            "📅 <b>Бронирования</b>\n\n"
+            "Google Calendar недоступен. Проверьте настройки и токены.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    period_start = datetime.now()
+    period_end = period_start + timedelta(days=365)
+    try:
+        calendar_service = GoogleCalendarService()
+        events = await calendar_service.list_events(period_start, period_end, max_results=250)
+    except Exception as e:
+        print(f"Ошибка получения событий календаря: {e}")
+        await callback.message.edit_text(
+            "📅 <b>Бронирования</b>\n\n"
+            "Не удалось получить данные из календаря.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    future_events = [event for event in events if event.get("start")]
+    if not future_events:
+        await callback.message.edit_text(
+            "📅 <b>Бронирования</b>\n\n"
+            "Будущих бронирований нет.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    await callback.message.edit_text(
+        "📅 <b>Будущие бронирования</b>\n\n"
+        "Выберите бронирование для просмотра деталей:",
+        reply_markup=get_admin_future_bookings_keyboard(future_events),
+        parse_mode="HTML"
     )
 
-    if CALENDAR_AVAILABLE and GoogleCalendarService:
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        week_later = today + timedelta(days=7)
+
+async def admin_booking_open(callback: CallbackQuery, is_admin: bool):
+    """Карточка выбранного бронирования для админа."""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    event_id = callback.data.replace("admin_booking_open_", "", 1)
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        await callback.answer("Google Calendar недоступен", show_alert=True)
+        return
+
+    try:
+        calendar_service = GoogleCalendarService()
+        raw_event = calendar_service._service.events().get(
+            calendarId=calendar_service.calendar_id,
+            eventId=event_id
+        ).execute()
+    except Exception as e:
+        print(f"Ошибка получения события {event_id}: {e}")
+        await callback.answer("Не удалось получить бронирование", show_alert=True)
+        return
+
+    summary = raw_event.get("summary", "Без названия")
+    description = raw_event.get("description", "")
+    start_raw = raw_event.get("start", {})
+    end_raw = raw_event.get("end", {})
+    start = start_raw.get("dateTime") or start_raw.get("date")
+    end = end_raw.get("dateTime") or end_raw.get("date")
+
+    start_dt = None
+    end_dt = None
+    try:
+        if start and "T" in start:
+            start_dt = datetime.fromisoformat(start)
+        if end and "T" in end:
+            end_dt = datetime.fromisoformat(end)
+    except Exception:
+        pass
+
+    contact = _extract_booking_contact_details(description)
+
+    text = "📋 <b>Информация о бронировании</b>\n\n"
+    text += f"🎯 <b>Услуга:</b> {summary}\n"
+    if start_dt:
+        text += f"📅 <b>Дата:</b> {start_dt.strftime('%d.%m.%Y')}\n"
+        text += f"🕒 <b>Время:</b> {start_dt.strftime('%H:%M')}"
+        if end_dt:
+            text += f" - {end_dt.strftime('%H:%M')}"
+        text += "\n"
+
+    # Для режима чата нужен numeric user_id; если есть только username, пробуем резолвнуть.
+    chat_target_user_id = contact.get("telegram_id")
+    if (not chat_target_user_id) and contact.get("telegram_username"):
         try:
-            calendar_service = GoogleCalendarService()
-            events = await calendar_service.list_events(today, week_later, max_results=3)
-            if events:
-                text += "\n\n<b>Ближайшие бронирования:</b>\n"
-                for event in events:
-                    start = event.get("start")
-                    if not start:
-                        continue
-                    summary = event.get("summary", "Без названия")
-                    text += f"• {start.strftime('%d.%m %H:%M')} — {summary}\n"
+            chat = await callback.bot.get_chat(f"@{contact['telegram_username']}")
+            if chat and chat.id:
+                chat_target_user_id = str(chat.id)
         except Exception as e:
-            print(f"Ошибка получения событий календаря: {e}")
-            text += "\n\n⚠️ Не удалось получить данные из календаря."
-    else:
-        text += "\n\n⚠️ Google Calendar недоступен."
+            print(f"Не удалось резолвнуть username @{contact['telegram_username']} в user_id: {e}")
+
+    text += "\n📞 <b>Данные для связи</b>\n"
+    text += f"👤 <b>Клиент:</b> {contact['name'] or 'Не указан'}\n"
+    text += f"📱 <b>Телефон:</b> {contact['phone'] or 'Не указан'}\n"
+    text += f"📧 <b>Email:</b> {contact['email'] or 'Не указан'}\n"
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_bookings_management_keyboard(),
+        reply_markup=get_admin_booking_detail_keyboard(chat_target_user_id),
         parse_mode="HTML"
     )
 
@@ -443,4 +563,5 @@ def register_admin_handlers(dp: Dispatcher):
     dp.callback_query.register(bookings_tomorrow, F.data == "bookings_tomorrow")
     dp.callback_query.register(bookings_week, F.data == "bookings_week")
     dp.callback_query.register(search_bookings, F.data == "search_bookings")
+    dp.callback_query.register(admin_booking_open, F.data.startswith("admin_booking_open_"))
     dp.message.register(process_search_bookings_query, AdminStates.waiting_for_booking_search_query)

@@ -4,7 +4,13 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 
-from telegram_bot.keyboards import get_main_menu_keyboard, get_services_keyboard, get_my_bookings_keyboard
+from telegram_bot.keyboards import (
+    get_main_menu_keyboard,
+    get_services_keyboard,
+    get_my_bookings_keyboard,
+    get_active_bookings_list_keyboard,
+    get_active_booking_actions_keyboard,
+)
 from telegram_bot.states import BookingStates
 from database import client_service, service_repo
 
@@ -16,6 +22,36 @@ except Exception as e:
     GoogleCalendarService = None
     CALENDAR_AVAILABLE = False
     print(f"[WARNING] Google Calendar недоступен: {e}")
+
+
+def _format_phone_for_search(phone: str | None) -> str | None:
+    if not phone:
+        return None
+    phone = str(phone).strip()
+    if len(phone) == 10 and phone.isdigit():
+        return f"+7 {phone[:3]} {phone[3:6]} {phone[6:8]} {phone[8:10]}"
+    return phone
+
+
+async def _get_user_calendar_events(callback: CallbackQuery, period_start: datetime, period_end: datetime):
+    """Возвращает события пользователя из календаря по телефону в описании."""
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        return None, "calendar_unavailable"
+
+    from database import client_repo
+    user_id = callback.from_user.id
+    client = await client_repo.get_by_telegram_id(user_id)
+    phone_display = _format_phone_for_search(client.phone if client else None)
+    if not phone_display:
+        return [], None
+
+    calendar_service = GoogleCalendarService()
+    events = await calendar_service.list_events(period_start, period_end)
+    user_events = [
+        event for event in events
+        if phone_display in (event.get("description") or "")
+    ]
+    return user_events, None
 
 async def start_command(message: Message, state: FSMContext, is_admin: bool = False):
     """Обработчик команды /start"""
@@ -96,20 +132,6 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             )
             return
 
-        # Показываем бронирования клиента из календаря (по телефону)
-        from database import client_repo
-        user_id = callback.from_user.id
-        phone_display = None
-        try:
-            client = await client_repo.get_by_telegram_id(user_id)
-            if client and client.phone:
-                phone = client.phone
-                if len(phone) == 10 and phone.isdigit():
-                    phone_display = f"+7 {phone[:3]} {phone[3:6]} {phone[6:8]} {phone[8:10]}"
-                else:
-                    phone_display = str(phone)
-        except Exception:
-            phone_display = None
         now = datetime.now()
         if callback.data == "active_bookings":
             period_start = now
@@ -123,8 +145,15 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             empty_text = "📅 <b>История бронирований</b>\n\nИстория пока пуста."
 
         try:
-            calendar_service = GoogleCalendarService()
-            events = await calendar_service.list_events(period_start, period_end)
+            user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+            if error_code == "calendar_unavailable":
+                await callback.message.edit_text(
+                    "📅 <b>Ваши бронирования</b>\n\n"
+                    "Google Calendar недоступен. Проверьте настройки и токены.",
+                    reply_markup=get_my_bookings_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
         except Exception as e:
             print(f"Ошибка получения событий календаря: {e}")
             await callback.message.edit_text(
@@ -135,18 +164,19 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             )
             return
 
-        user_events = []
-        if phone_display:
-            needle = phone_display
-            user_events = [
-                event for event in events
-                if needle in (event.get("description") or "")
-            ]
-
         if not user_events:
             await callback.message.edit_text(
                 empty_text,
                 reply_markup=get_my_bookings_keyboard(),
+                parse_mode="HTML"
+            )
+            return
+
+        # Для активных бронирований показываем список кнопок для действий
+        if callback.data == "active_bookings":
+            await callback.message.edit_text(
+                title + "Выберите бронирование для редактирования:",
+                reply_markup=get_active_bookings_list_keyboard(user_events),
                 parse_mode="HTML"
             )
             return
@@ -196,6 +226,86 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
                 parse_mode="HTML"
             )
 
+
+async def active_booking_open_callback(callback: CallbackQuery):
+    """Показ карточки активной брони с действиями."""
+    event_id = callback.data.replace("active_booking_open_", "", 1)
+    now = datetime.now()
+    period_start = now
+    period_end = now + timedelta(days=90)
+
+    try:
+        user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+        if error_code == "calendar_unavailable":
+            await callback.answer("Календарь недоступен", show_alert=True)
+            return
+    except Exception as e:
+        print(f"Ошибка получения активных бронирований: {e}")
+        await callback.answer("Ошибка получения данных", show_alert=True)
+        return
+
+    event = next((e for e in user_events if e.get("id") == event_id), None)
+    if not event:
+        await callback.answer("Бронирование не найдено", show_alert=True)
+        return
+
+    start = event.get("start")
+    end = event.get("end")
+    summary = event.get("summary", "Без названия")
+    text = "✏️ <b>Редактирование бронирования</b>\n\n"
+    text += f"🎯 <b>Услуга:</b> {summary}\n"
+    if start:
+        text += f"📅 <b>Дата:</b> {start.strftime('%d.%m.%Y')}\n"
+        text += f"🕒 <b>Время:</b> {start.strftime('%H:%M')}"
+        if end:
+            text += f" - {end.strftime('%H:%M')}"
+        text += "\n"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_active_booking_actions_keyboard(event_id),
+        parse_mode="HTML"
+    )
+
+
+async def active_booking_cancel_callback(callback: CallbackQuery):
+    """Отмена активной брони пользователя в календаре."""
+    event_id = callback.data.replace("active_booking_cancel_", "", 1)
+    now = datetime.now()
+    period_start = now
+    period_end = now + timedelta(days=90)
+
+    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        await callback.answer("Календарь недоступен", show_alert=True)
+        return
+
+    try:
+        user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+        if error_code == "calendar_unavailable":
+            await callback.answer("Календарь недоступен", show_alert=True)
+            return
+        event = next((e for e in user_events if e.get("id") == event_id), None)
+        if not event:
+            await callback.answer("Бронирование не найдено", show_alert=True)
+            return
+
+        calendar_service = GoogleCalendarService()
+        calendar_service._service.events().delete(
+            calendarId=calendar_service.calendar_id,
+            eventId=event_id
+        ).execute()
+    except Exception as e:
+        print(f"Ошибка отмены бронирования: {e}")
+        await callback.answer("Не удалось отменить бронирование", show_alert=True)
+        return
+
+    await callback.answer("✅ Бронирование отменено")
+    await callback.message.edit_text(
+        "✅ <b>Бронирование отменено</b>\n\nВыберите раздел:",
+        reply_markup=get_my_bookings_keyboard(),
+        parse_mode="HTML"
+    )
+
 async def help_command(message: Message):
     """Обработчик команды /help"""
     help_text = """
@@ -225,3 +335,5 @@ def register_start_handlers(dp: Dispatcher):
     dp.callback_query.register(main_menu_callback, F.data.in_([
         "services", "my_bookings", "active_bookings", "booking_history", "contacts", "back_to_main", "admin_panel"
     ]))
+    dp.callback_query.register(active_booking_open_callback, F.data.startswith("active_booking_open_"))
+    dp.callback_query.register(active_booking_cancel_callback, F.data.startswith("active_booking_cancel_"))

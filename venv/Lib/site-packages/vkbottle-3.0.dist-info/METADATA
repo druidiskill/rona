@@ -1,0 +1,92 @@
+Metadata-Version: 2.1
+Name: vkbottle
+Version: 3.0
+Summary: Homogenic! Customizable asynchronous VK API framework implementing comfort and speed
+Home-page: https://github.com/timoniq/vkbottle
+License: MIT
+Keywords: vk,vk-api,vkbottle,user-longpoll,async,asyncio,bot,longpoll-api,callback,middleware
+Author: timoniq
+Requires-Python: >=3.7,<4.0
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Software Development :: Quality Assurance
+Classifier: Typing :: Typed
+Requires-Dist: aiohttp (>=3.6.2,<4.0.0)
+Requires-Dist: choicelib (>=0.1.1,<0.2.0)
+Requires-Dist: vbml (>=1.0,<2.0)
+Requires-Dist: vkbottle-types (>=0.1.21,<0.2.0)
+Requires-Dist: watchgod (>=0.7,<0.8)
+Project-URL: Bug Tracker, https://github.com/timoniq/vkbottle/issues
+Project-URL: Repository, https://github.com/timoniq/vkbottle
+Description-Content-Type: text/markdown
+
+<p align="center">
+  <a href="https://github.com/tesseradecade/vbml">
+    <img src="/docs/logo.jpg" width="200px" style="display: inline-block;">
+  </a>
+</p>
+<h1 align="center">
+  VKBottle 3.x
+</h1>
+<p align="center">
+  <img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/timoniq/vkbottle/CI?style=flat-square">
+  <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/timoniq/vkbottle?style=flat-square">
+  <img alt="GitHub issues by-label" src="https://img.shields.io/github/issues/timoniq/vkbottle/bug?style=flat-square">
+  <img alt="PyPI" src="https://img.shields.io/pypi/v/vkbottle?color=green&label=PyPI&style=flat-square">
+</p>
+
+> Кастомизируемый, быстрый и удобный фреймворк для работы с VK API
+
+## Документация
+
+[Туториал для новичков](https://github.com/timoniq/vkbottle/blob/master/docs/tutorial/index.md)\
+[Техническая документация](https://vkbottle.readthedocs.io/ru/latest)
+
+## Установка
+
+Установить новейшую версию можно командой:
+
+```shell
+pip install -U https://github.com/timoniq/vkbottle/archive/master.zip
+```
+
+Установить версию 3.0 с PyPI можно командой:
+
+```shell
+pip install vkbottle==3.0
+```
+
+Если вы ищете старые версии (`2.x`) - [вам сюда](https://github.com/timoniq/vkbottle/tree/v2.0)
+
+## Hello World
+
+[Смотреть больше примеров!](https://github.com/timoniq/vkbottle/tree/master/examples)\
+[Почему VKBottle?](https://github.com/timoniq/vkbottle/blob/master/docs/why_vkbottle.md)
+
+```python
+from vkbottle.bot import Bot
+
+bot = Bot("GroupToken")
+
+@bot.on.message()
+async def handler(_) -> str:
+    return "Hello world!"
+
+bot.run_forever()
+```
+
+## Contributing
+
+ПР поддерживаются! Перед созданием пулл реквеста ознакомьтесь с [CONTRIBUTION_GUIDE.md](CONTRIBUTION_GUIDE.md). Нам приятно видеть ваш вклад в развитие библиотеки. Задавайте вопросы в блоке Issues и в [**чате Telegram**](https://t.me/vkbottle_ru) / [**чате VK**](https://vk.me/join/AJQ1d7fBUBM_800lhEe_AwJj)!
+
+## Лицензия
+
+Copyright © 2019-2021 [timoniq](https://github.com/timoniq).\
+Этот проект имеет [MIT](https://github.com/timoniq/vkbottle/blob/master/LICENSE) лицензию.
+
