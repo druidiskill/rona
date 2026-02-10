@@ -185,7 +185,6 @@ def get_services_management_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="➕ Добавить услугу", callback_data="add_service_new")],
         [InlineKeyboardButton(text="✏️ Редактировать услугу", callback_data="edit_service")],
-        [InlineKeyboardButton(text="📸 Управление фото", callback_data="manage_photos")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

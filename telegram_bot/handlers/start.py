@@ -61,11 +61,24 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
     elif callback.data == "services":
         # Показываем услуги
         services = await service_repo.get_all_active()
-        await callback.message.edit_text(
-            "📸 <b>Наши услуги:</b>\n\nВыберите услугу для бронирования:",
-            reply_markup=get_services_keyboard(services),
-            parse_mode="HTML"
-        )
+        text = "📸 <b>Наши услуги:</b>\n\nВыберите услугу для бронирования:"
+        try:
+            await callback.message.edit_text(
+                text,
+                reply_markup=get_services_keyboard(services),
+                parse_mode="HTML"
+            )
+        except Exception:
+            # Если текущее сообщение - фото/медиа, edit_text не работает
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(
+                text,
+                reply_markup=get_services_keyboard(services),
+                parse_mode="HTML"
+            )
     elif callback.data == "my_bookings":
         await callback.message.edit_text(
             "📅 <b>Мои бронирования</b>\n\n"
@@ -83,8 +96,20 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             )
             return
 
-        # Показываем бронирования клиента из календаря
+        # Показываем бронирования клиента из календаря (по телефону)
+        from database import client_repo
         user_id = callback.from_user.id
+        phone_display = None
+        try:
+            client = await client_repo.get_by_telegram_id(user_id)
+            if client and client.phone:
+                phone = client.phone
+                if len(phone) == 10 and phone.isdigit():
+                    phone_display = f"+7 {phone[:3]} {phone[3:6]} {phone[6:8]} {phone[8:10]}"
+                else:
+                    phone_display = str(phone)
+        except Exception:
+            phone_display = None
         now = datetime.now()
         if callback.data == "active_bookings":
             period_start = now
@@ -110,11 +135,13 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             )
             return
 
-        needle = f"Telegram ID: {user_id}"
-        user_events = [
-            event for event in events
-            if needle in (event.get("description") or "")
-        ]
+        user_events = []
+        if phone_display:
+            needle = phone_display
+            user_events = [
+                event for event in events
+                if needle in (event.get("description") or "")
+            ]
 
         if not user_events:
             await callback.message.edit_text(
@@ -151,11 +178,23 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             parse_mode="HTML"
         )
     elif callback.data == "back_to_main":
-        await callback.message.edit_text(
-            "🏠 <b>Главное меню</b>\n\nВыберите действие:",
-            reply_markup=get_main_menu_keyboard(is_admin=is_admin),
-            parse_mode="HTML"
-        )
+        text = "🏠 <b>Главное меню</b>\n\nВыберите действие:"
+        try:
+            await callback.message.edit_text(
+                text,
+                reply_markup=get_main_menu_keyboard(is_admin=is_admin),
+                parse_mode="HTML"
+            )
+        except Exception:
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.message.answer(
+                text,
+                reply_markup=get_main_menu_keyboard(is_admin=is_admin),
+                parse_mode="HTML"
+            )
 
 async def help_command(message: Message):
     """Обработчик команды /help"""

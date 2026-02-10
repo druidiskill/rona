@@ -10,6 +10,12 @@ from telegram_bot.keyboards import (
 from telegram_bot.states import AdminStates
 from database import service_repo
 from database.models import Service
+from telegram_bot.utils.photos import (
+    get_service_dir,
+    count_photos_in_dir,
+    clear_dir,
+    save_message_photo,
+)
 
 async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Начало редактирования услуги с новым интерфейсом"""
@@ -44,17 +50,8 @@ async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_
                 return []
         return []
 
-    def _normalize_photos(value):
-        if not value:
-            return []
-        if isinstance(value, str):
-            return [p for p in value.split(',') if p]
-        if isinstance(value, list):
-            return value
-        return []
-
     extra_services = _normalize_plus_ids(service.plus_service_ids)
-    photos_list = _normalize_photos(service.photo_ids)
+    photos_count = count_photos_in_dir(get_service_dir(service_id))
 
     service_data = {
         'name': service.name,
@@ -68,8 +65,7 @@ async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_
         'min_duration': service.min_duration_minutes,
         'step_duration': service.duration_step_minutes,
         'extra_services': extra_services,
-        'photos': photos_list,
-        'photos_count': len(photos_list)
+        'photos_count': photos_count
     }
     
     # Сохраняем данные в состоянии
@@ -540,24 +536,27 @@ async def process_edit_service_photos(message: Message, state: FSMContext, is_ad
         await message.answer("❌ Отправьте фотографию")
         return
     
-    # Получаем file_id самой большой фотографии
-    photo = message.photo[-1]
-    file_id = photo.file_id
-    
-    # Обновляем данные - заменяем старые фотографии новыми
     data = await state.get_data()
     service_data = data.get("edit_service_data", {})
-    
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await message.answer("❌ Не удалось определить услугу")
+        return
+
+    service_dir = get_service_dir(service_id)
+
     # Если это первая фотография, очищаем старые
     if 'photos_updated' not in service_data:
-        service_data['photos'] = []
+        clear_dir(service_dir)
         service_data['photos_updated'] = True
-    
-    # Добавляем новую фотографию
-    photos = service_data.get('photos', [])
-    photos.append(file_id)
-    service_data['photos'] = photos
-    service_data['photos_count'] = len(photos)
+
+    try:
+        await save_message_photo(message, service_dir)
+    except Exception:
+        await message.answer("❌ Не удалось сохранить фотографию")
+        return
+
+    service_data['photos_count'] = count_photos_in_dir(service_dir)
     await state.update_data(edit_service_data=service_data)
     
     # Показываем обновленное меню
@@ -633,7 +632,7 @@ async def save_edit_service_callback(callback: CallbackQuery, state: FSMContext,
             price_for_extra_client_weekend=service_data.get('price_extra_weekend', 0),
             min_duration_minutes=service_data['min_duration'],
             duration_step_minutes=service_data['step_duration'],
-            photo_ids=','.join(service_data.get('photos', [])),
+            photo_ids=None,
             is_active=True
         )
         

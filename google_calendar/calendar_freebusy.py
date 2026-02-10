@@ -15,7 +15,7 @@ import os
 import json
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, time
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import List, Dict, Tuple
 
 from google.auth.transport.requests import Request
@@ -98,6 +98,13 @@ def _resolve_token_file() -> str:
     return TOKEN_FILE
 
 
+def _get_tz(time_zone: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(time_zone)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
 def build_calendar_service():
     """Создает Google Calendar API service с OAuth."""
     token_file = _resolve_token_file()
@@ -166,7 +173,7 @@ def get_freebusy(
 ) -> Dict[str, List[Tuple[datetime, datetime]]]:
     """Запрашивает занятость (FreeBusy) и возвращает интервалы по календарям."""
     if time_min.tzinfo is None or time_max.tzinfo is None:
-        tz = ZoneInfo(time_zone)
+        tz = _get_tz(time_zone)
         time_min = time_min.replace(tzinfo=tz)
         time_max = time_max.replace(tzinfo=tz)
 
@@ -256,7 +263,7 @@ def get_free_slots_for_date(
     time_zone: str = "Europe/Moscow",
 ) -> List[Tuple[datetime, datetime]]:
     """Свободные слоты на конкретную дату."""
-    tz = ZoneInfo(time_zone)
+    tz = _get_tz(time_zone)
     day_start = datetime.combine(date_obj, work_start, tzinfo=tz)
     day_end = datetime.combine(date_obj, work_end, tzinfo=tz)
 
@@ -296,7 +303,7 @@ def book_slot(
 ) -> dict:
     """Записывает событие в календарь на указанный слот."""
     if start.tzinfo is None or end.tzinfo is None:
-        tz = ZoneInfo(time_zone)
+        tz = _get_tz(time_zone)
         start = start.replace(tzinfo=tz)
         end = end.replace(tzinfo=tz)
 

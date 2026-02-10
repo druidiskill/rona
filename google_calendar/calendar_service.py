@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from datetime import date, datetime, time
 from typing import List, Optional, Dict, Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 load_dotenv()
 
@@ -23,7 +23,11 @@ class GoogleCalendarService:
 
     def _ensure_tz(self, dt: datetime) -> datetime:
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=ZoneInfo(self.time_zone))
+            try:
+                tz = ZoneInfo(self.time_zone)
+            except ZoneInfoNotFoundError:
+                tz = ZoneInfo("UTC")
+            return dt.replace(tzinfo=tz)
         return dt
 
     def _parse_event_time(self, event: Dict[str, Any], key: str) -> Optional[datetime]:

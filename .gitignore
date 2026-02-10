@@ -4,8 +4,9 @@
 *.md
 *.pyc
 /PHOTOS/
+/media/
 !README.md
 *pyc
-/venv/
+/.venv/
 .env*
 /tests/

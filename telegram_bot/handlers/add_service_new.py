@@ -10,6 +10,14 @@ from telegram_bot.keyboards import (
 from telegram_bot.states import AdminStates
 from database import service_repo
 from database.models import Service
+from telegram_bot.utils.photos import (
+    get_temp_dir,
+    get_service_dir,
+    count_photos_in_dir,
+    clear_dir,
+    save_message_photo,
+    move_dir_contents,
+)
 
 async def start_add_service_new(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Начало добавления новой услуги с новым интерфейсом"""
@@ -19,6 +27,9 @@ async def start_add_service_new(callback: CallbackQuery, state: FSMContext, is_a
     
     # Очищаем предыдущие данные
     await state.clear()
+    # Очищаем временные фото для текущего администратора
+    temp_dir = get_temp_dir(callback.from_user.id)
+    clear_dir(temp_dir)
     
     await callback.message.edit_text(
         "📸 <b>Добавление новой услуги</b>\n\n"
@@ -330,29 +341,30 @@ async def process_new_service_photos(message: Message, state: FSMContext, is_adm
         await message.answer("У вас нет прав администратора")
         return
     
-    # Проверяем, есть ли фотографии в сообщении
-    if message.photo:
-        # Получаем ID фотографии (берем самое большое разрешение)
-        photo_id = message.photo[-1].file_id
-        
-        # Сохраняем фотографии
-        data = await state.get_data()
-        if "new_service_data" not in data:
-            data["new_service_data"] = {}
-        
-        if "photos" not in data["new_service_data"]:
-            data["new_service_data"]["photos"] = []
-        
-        data["new_service_data"]["photos"].append(photo_id)
-        data["new_service_data"]["photos_count"] = len(data["new_service_data"]["photos"])
-        await state.update_data(data)
-        
-        await message.answer(f"✅ Фотография добавлена! Всего: {len(data['new_service_data']['photos'])}")
-        
-        # Возвращаемся к главному меню
-        await show_add_service_main_after_edit(message, state, is_admin)
-    else:
+    if not message.photo:
         await message.answer("❌ Пожалуйста, отправьте фотографию")
+        return
+
+    data = await state.get_data()
+    if "new_service_data" not in data:
+        data["new_service_data"] = {}
+
+    temp_dir = get_temp_dir(message.from_user.id)
+    try:
+        await save_message_photo(message, temp_dir)
+    except Exception:
+        await message.answer("❌ Не удалось сохранить фотографию")
+        return
+
+    photos_count = count_photos_in_dir(temp_dir)
+    data["new_service_data"]["photos_count"] = photos_count
+    data["new_service_data"]["temp_photos_dir"] = str(temp_dir)
+    await state.update_data(data)
+
+    await message.answer(f"✅ Фотография добавлена! Всего: {photos_count}")
+
+    # Возвращаемся к главному меню
+    await show_add_service_main_after_edit(message, state, is_admin)
 
 async def select_extra_service_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Обработчик выбора дополнительной услуги"""
@@ -489,12 +501,17 @@ async def create_service_final_callback(callback: CallbackQuery, state: FSMConte
             price_for_extra_client_weekend=service_data.get('price_extra_weekend', 0),
             min_duration_minutes=service_data['min_duration'],
             duration_step_minutes=service_data['step_duration'],
-            photo_ids=','.join(service_data.get('photos', [])),
+            photo_ids=None,
             is_active=True
         )
         
         # Сохраняем в базу данных
         service_id = await service_repo.create(service)
+
+        # Перемещаем временные фото в директорию услуги
+        temp_dir = service_data.get("temp_photos_dir")
+        if temp_dir:
+            move_dir_contents(get_temp_dir(callback.from_user.id), get_service_dir(service_id))
         
         # Очищаем состояние
         await state.clear()

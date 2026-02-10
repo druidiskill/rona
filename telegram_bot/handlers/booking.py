@@ -195,11 +195,23 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: ID услуги не найден", show_alert=True)
         return
     
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_booking_form_keyboard(service_id, booking_data),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_booking_form_keyboard(service_id, booking_data),
+            parse_mode="HTML"
+        )
+    except Exception:
+        # Если текущее сообщение - фото/медиа, edit_text не работает
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(
+            text,
+            reply_markup=get_booking_form_keyboard(service_id, booking_data),
+            parse_mode="HTML"
+        )
 
 async def select_date(callback: CallbackQuery, state: FSMContext):
     """Выбор даты для бронирования"""
@@ -1180,13 +1192,26 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
             
             print(f"[CALENDAR] Создание события: {event_start} - {event_end}")
             
+            extras = booking_data.get('extras', [])
+            need_photographer = "Да" if "photographer" in extras else "Нет"
+            need_makeuproom = "Да" if "makeuproom" in extras else "Нет"
+            extras_text = []
+            if "photographer" in extras:
+                extras_text.append("Фотограф")
+            if "makeuproom" in extras:
+                extras_text.append("Гримерка")
+            extras_display = ", ".join(extras_text) if extras_text else "Нет"
+
             # Создаем описание события
+            username = callback.from_user.username
+            telegram_link = f"https://t.me/{username}" if username else "не указан"
+
             event_description = f"""
 <b>Кто забронировал</b>
 {booking_data['name']}
 email: {booking_data.get('email', 'не указан')}
 {booking_data['phone']}
-Telegram ID: {telegram_id}
+Telegram: {telegram_link}
 
 <b>Какой зал вы хотите забронировать?</b>
 {service_name}
@@ -1195,10 +1220,13 @@ Telegram ID: {telegram_id}
 {booking_data['guests_count']}
 
 <b>Нужна ли гримерная за час до съемки?</b>
-{booking_data.get('makeuproom', 'Не указано')}
+{need_makeuproom}
 
 <b>Нужен ли фотограф?</b> 
-{booking_data.get('need_photographer', 'Не указано')}
+{need_photographer}
+
+<b>Дополнительные услуги:</b>
+{extras_display}
 
 <b><u>ВНИМАНИЕ</u></b> Автоматически на вашу электронную почту приходит подтверждение о <b><u>предварительном бронировании времени</u></b><u>.</u> Вам нужно:
 
@@ -1255,6 +1283,61 @@ Telegram ID: {telegram_id}
 
     except Exception as e:
         print(f"Ошибка обновления клиента в БД: {e}")
+
+    # Уведомляем администраторов о новой брони
+    try:
+        from database import admin_repo
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        extras = booking_data.get('extras', [])
+        extras_labels = {
+            'photographer': 'Фотограф',
+            'makeuproom': 'Гримерка'
+        }
+        extras_display = ", ".join(extras_labels.get(e, e) for e in extras) if extras else "Нет"
+
+        username = callback.from_user.username
+        phone_digits = "".join(ch for ch in booking_data['phone'] if ch.isdigit())
+        # Приводим к формату 10 цифр без ведущей 7/8
+        if len(phone_digits) == 11 and phone_digits.startswith(("7", "8")):
+            phone_digits = phone_digits[1:]
+        phone_clean = phone_digits
+
+        contact_url = f"https://t.me/{username}" if username else f"tg://user?id={telegram_id}"
+
+        phone_display = booking_data['phone']
+        phone_html = f"<code>{phone_display}</code>"
+
+        admin_text = (
+            "📅 <b>Новая бронь</b>\n\n"
+            f"📸 Услуга: {service_name}\n"
+            f"📅 Дата: {selected_date.strftime('%d.%m.%Y')}\n"
+            f"🕒 Время: {time_range_display}\n"
+            f"👤 Клиент: {booking_data['name']}\n"
+            f"📱 Телефон: {phone_html}\n"
+            f"👥 Гостей: {booking_data['guests_count']}\n"
+            f"➕ Доп. услуги: {extras_display}\n"
+        )
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Связаться с клиентом", url=contact_url)]
+        ])
+
+        admins = await admin_repo.get_all()
+        for admin in admins:
+            if not admin.is_active or not admin.telegram_id:
+                continue
+            try:
+                await callback.bot.send_message(
+                    admin.telegram_id,
+                    admin_text,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                print(f"Не удалось отправить уведомление админу {admin.telegram_id}: {e}")
+    except Exception as e:
+        print(f"Ошибка уведомления администраторов: {e}")
 
     # Отправляем подтверждение
     await callback.message.edit_text(

@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 
 from telegram_bot.keyboards import get_service_details_keyboard, get_back_to_service_keyboard
 from database import service_repo
+from telegram_bot.utils.photos import list_service_photos
 
 async def show_service_details(callback: CallbackQuery, state: FSMContext):
     """Показ деталей услуги"""
@@ -37,11 +38,21 @@ async def show_service_details(callback: CallbackQuery, state: FSMContext):
 • Гримерка: 1000₽/час
     """
     
-    await callback.message.edit_text(
-        description,
-        reply_markup=get_service_details_keyboard(service_id),
-        parse_mode="HTML"
-    )
+    photo_files = list_service_photos(service_id)
+    if photo_files:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=FSInputFile(photo_files[0]),
+            caption=description.strip(),
+            parse_mode="HTML",
+            reply_markup=get_service_details_keyboard(service_id)
+        )
+    else:
+        await callback.message.edit_text(
+            description,
+            reply_markup=get_service_details_keyboard(service_id),
+            parse_mode="HTML"
+        )
 
 # Функция start_booking перенесена в booking.py для единой логики бронирования
 # Удалено во избежание дублирования обработчиков
@@ -55,49 +66,57 @@ async def show_photos(callback: CallbackQuery):
         await callback.answer("Услуга не найдена", show_alert=True)
         return
     
-    if not service.photo_ids:
+    photo_files = list_service_photos(service_id)
+    if not photo_files:
         await callback.answer("Фотографии для этой услуги пока не добавлены", show_alert=True)
         return
-    
-    # Получаем список file_id фотографий
-    photo_ids = [photo_id.strip() for photo_id in service.photo_ids.split(',') if photo_id.strip()]
-    
-    if not photo_ids:
-        await callback.answer("Фотографии для этой услуги пока не добавлены", show_alert=True)
+
+    # Первая фотография уже показана в деталях услуги
+    photo_files = photo_files[1:]
+    if not photo_files:
+        await callback.answer("Других фотографий нет", show_alert=True)
         return
     
-    # Подготавливаем медиа-группу
-    from aiogram.types import InputMediaPhoto
-    
-    # Создаем список медиа-объектов
-    media_group = []
-    
-    # Первая фотография с подписью
     caption = f"📸 <b>{service.name}</b>\n\n{service.description}"
-    media_group.append(InputMediaPhoto(
-        media=photo_ids[0],
-        caption=caption,
-        parse_mode="HTML"
-    ))
-    
-    # Остальные фотографии без подписи
-    for photo_id in photo_ids[1:]:
-        media_group.append(InputMediaPhoto(media=photo_id))
-    
-    # Отправляем медиа-группу
-    sent_messages = await callback.message.answer_media_group(media=media_group)
-    
-    # Собираем ID всех сообщений медиа-группы
-    media_message_ids = [str(msg.message_id) for msg in sent_messages]
-    message_ids_str = ",".join(media_message_ids)
-    
+
+    # Если только одно фото — отправляем как обычную фотографию
+    if len(photo_files) == 1:
+        try:
+            from aiogram.types import FSInputFile
+            sent = await callback.message.answer_photo(
+                photo=FSInputFile(photo_files[0]),
+                caption=caption,
+                parse_mode="HTML"
+            )
+            message_ids_str = str(sent.message_id)
+        except Exception:
+            await callback.answer("Не удалось отправить фотографию", show_alert=True)
+            return
+    else:
+        # Медиа-группа требует минимум 2 элемента
+        from aiogram.types import InputMediaPhoto, FSInputFile
+        media_group = [InputMediaPhoto(
+            media=FSInputFile(photo_files[0]),
+            caption=caption,
+            parse_mode="HTML"
+        )]
+        for photo_path in photo_files[1:]:
+            media_group.append(InputMediaPhoto(media=FSInputFile(photo_path)))
+
+        try:
+            sent_messages = await callback.message.answer_media_group(media=media_group)
+            message_ids_str = ",".join(str(msg.message_id) for msg in sent_messages)
+        except Exception:
+            await callback.answer("Не удалось отправить фотографии", show_alert=True)
+            return
+
     # Отправляем кнопку "Назад" отдельным сообщением
-    control_message = await callback.message.answer(
+    await callback.message.answer(
         "📸 <b>Фотографии услуги</b>",
         reply_markup=get_back_to_service_keyboard(service_id, message_ids_str),
         parse_mode="HTML"
     )
-    
+
     await callback.answer("Фотографии отправлены!")
 
 async def back_to_service_from_photos(callback: CallbackQuery):
