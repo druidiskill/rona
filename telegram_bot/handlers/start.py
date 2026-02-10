@@ -37,7 +37,8 @@ async def start_command(message: Message, state: FSMContext, is_admin: bool = Fa
     
     await message.answer(
         welcome_text,
-        reply_markup=get_main_menu_keyboard(is_admin)
+        reply_markup=get_main_menu_keyboard(is_admin),
+        parse_mode="HTML"
     )
 
 async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool = False):

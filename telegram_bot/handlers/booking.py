@@ -59,6 +59,35 @@ async def _get_time_slots_for_date(target_date: date) -> tuple[list[dict], bool,
 
     return _build_default_time_slots(), False, None
 
+def _format_booking_date(date_value) -> str:
+    """Формат даты для UI формы бронирования."""
+    if not date_value:
+        return "Не выбрано"
+    try:
+        return datetime.strptime(str(date_value), "%Y-%m-%d").strftime("%d.%m.%Y")
+    except Exception:
+        return str(date_value)
+
+
+def _format_booking_time_range(time_value, duration_minutes: int) -> str:
+    """Формат интервала времени с учетом длительности."""
+    if not time_value:
+        return "Не выбрано"
+    try:
+        start_str = str(time_value).split(" - ")[0].strip()
+        start_dt = datetime.strptime(start_str, "%H:%M")
+        end_dt = start_dt + timedelta(minutes=int(duration_minutes or 60))
+        return f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+    except Exception:
+        return str(time_value)
+
+
+def _format_booking_guests(guests_value) -> str:
+    """Формат количества гостей с защитой от None."""
+    if guests_value is None:
+        return "Не указано"
+    return str(guests_value)
+
 
 async def start_booking(callback: CallbackQuery, state: FSMContext):
     """Начало бронирования"""
@@ -123,19 +152,23 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
     # Получаем service_name из booking_data или из state
     service_name = booking_data.get('service_name') or data.get('service_name', '')
     service_id = data.get('service_id')
+    duration_minutes = booking_data.get('duration', 60)
+    date_display = _format_booking_date(booking_data.get('date'))
+    time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+    guests_display = _format_booking_guests(booking_data.get('guests_count'))
     
     text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
     text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
     
     # Обязательные поля
-    text += f"‼️ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-    text += f"‼️ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+    text += f"‼️ <b>Дата:</b> {date_display}\n"
+    text += f"‼️ <b>Время:</b> {time_display}\n"
     text += f"‼️ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
     text += f"‼️ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-    text += f"‼️ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+    text += f"‼️ <b>Количество гостей:</b> {guests_display}\n"
     
     # Необязательные поля
-    text += f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+    text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
     
     # Форматируем дополнительные услуги для отображения
     extras = booking_data.get('extras', [])
@@ -478,19 +511,23 @@ async def process_name_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
+        duration_minutes = booking_data.get('duration', 60)
+        date_display = _format_booking_date(booking_data.get('date'))
+        time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+        guests_display = _format_booking_guests(booking_data.get('guests_count'))
         
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
         
         # Обязательные поля
-        text += f"✅ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-        text += f"✅ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+        text += f"✅ <b>Дата:</b> {date_display}\n"
+        text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"‼️ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-        text += f"‼️ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+        text += f"‼️ <b>Количество гостей:</b> {guests_display}\n"
         
         # Необязательные поля
-        text += f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+        text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
         text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
@@ -585,19 +622,23 @@ async def process_phone_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
+        duration_minutes = booking_data.get('duration', 60)
+        date_display = _format_booking_date(booking_data.get('date'))
+        time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+        guests_display = _format_booking_guests(booking_data.get('guests_count'))
         
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
         
         # Обязательные поля
-        text += f"✅ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-        text += f"✅ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+        text += f"✅ <b>Дата:</b> {date_display}\n"
+        text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"✅ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-        text += f"‼️ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+        text += f"‼️ <b>Количество гостей:</b> {guests_display}\n"
         
         # Необязательные поля
-        text += f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+        text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
         text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
@@ -676,19 +717,23 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
+        duration_minutes = booking_data.get('duration', 60)
+        date_display = _format_booking_date(booking_data.get('date'))
+        time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+        guests_display = _format_booking_guests(booking_data.get('guests_count'))
         
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
         
         # Обязательные поля
-        text += f"✅ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-        text += f"✅ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+        text += f"✅ <b>Дата:</b> {date_display}\n"
+        text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"✅ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-        text += f"✅ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+        text += f"✅ <b>Количество гостей:</b> {guests_display}\n"
         
         # Необязательные поля
-        text += f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+        text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
         text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
@@ -807,19 +852,23 @@ async def process_duration_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
+        duration_minutes = booking_data.get('duration', 60)
+        date_display = _format_booking_date(booking_data.get('date'))
+        time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+        guests_display = _format_booking_guests(booking_data.get('guests_count'))
         
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
         
         # Обязательные поля
-        text += f"✅ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-        text += f"✅ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+        text += f"✅ <b>Дата:</b> {date_display}\n"
+        text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"✅ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-        text += f"✅ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+        text += f"✅ <b>Количество гостей:</b> {guests_display}\n"
         
         # Необязательные поля
-        text += f"✅ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+        text += f"✅ <b>Продолжительность:</b> {duration_minutes} мин.\n"
         text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
@@ -886,19 +935,23 @@ async def process_email_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
+        duration_minutes = booking_data.get('duration', 60)
+        date_display = _format_booking_date(booking_data.get('date'))
+        time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
+        guests_display = _format_booking_guests(booking_data.get('guests_count'))
         
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
         
         # Обязательные поля
-        text += f"✅ <b>Дата:</b> {booking_data.get('date', 'Не выбрано')}\n"
-        text += f"✅ <b>Время:</b> {booking_data.get('time', 'Не выбрано')}\n"
+        text += f"✅ <b>Дата:</b> {date_display}\n"
+        text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"✅ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
-        text += f"✅ <b>Количество гостей:</b> {booking_data.get('guests_count', 'Не указано')}\n"
+        text += f"✅ <b>Количество гостей:</b> {guests_display}\n"
         
         # Необязательные поля
-        text += f"✅ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n"
+        text += f"✅ <b>Продолжительность:</b> {duration_minutes} мин.\n"
         text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
         email_display = booking_data.get('email', 'Не указан')
         if email_display:
@@ -1062,10 +1115,11 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
         
         missing_names = [field_names[field] for field in missing_fields]
         
-        await callback.answer(
+        await callback.answer("❌ Не все поля заполнены", show_alert=True)
+        await callback.message.answer(
             f"❌ <b>Не все поля заполнены</b>\n\n"
             f"Заполните: {', '.join(missing_names)}",
-            show_alert=True
+            parse_mode="HTML"
         )
         return
     
@@ -1074,6 +1128,9 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     selected_time_str = booking_data['time'].split(' - ')[0]  # Берем время начала
     selected_time = datetime.strptime(selected_time_str, "%H:%M").time()
     selected_datetime = datetime.combine(selected_date, selected_time)
+    duration_minutes = booking_data.get('duration', 60)
+    end_datetime = selected_datetime + timedelta(minutes=duration_minutes)
+    time_range_display = f"{selected_datetime.strftime('%H:%M')} - {end_datetime.strftime('%H:%M')}"
     
     # Финальная проверка доступности времени в Google Calendar
     if CALENDAR_AVAILABLE and GoogleCalendarService:
@@ -1119,7 +1176,6 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
             # Формируем данные для события (используем уже определенные переменные)
             event_start = selected_datetime
             # Используем сохраненную продолжительность или по умолчанию 60 минут
-            duration_minutes = booking_data.get('duration', 60)
             event_end = event_start + timedelta(minutes=duration_minutes)
             
             print(f"[CALENDAR] Создание события: {event_start} - {event_end}")
@@ -1204,11 +1260,11 @@ Telegram ID: {telegram_id}
     await callback.message.edit_text(
         f"✅ <b>Бронирование подтверждено!</b>\n\n"
         f"📅 <b>Дата:</b> {selected_date.strftime('%d.%m.%Y')}\n"
-        f"🕒 <b>Время:</b> {booking_data['time']}\n"
+        f"🕒 <b>Время:</b> {time_range_display}\n"
         f"👤 <b>Клиент:</b> {booking_data['name']}\n"
         f"📱 <b>Телефон:</b> {booking_data['phone']}\n"
         f"👥 <b>Гостей:</b> {booking_data['guests_count']}\n"
-        f"⏰ <b>Продолжительность:</b> {booking_data.get('duration', 60)} мин.\n\n"
+        f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n\n"
         f"🎯 <b>Услуга:</b> {service_name}\n\n"
         f"📅 <b>Событие создано в календаре</b>\n\n"
         f"Спасибо за бронирование! Мы свяжемся с вами для подтверждения деталей.",

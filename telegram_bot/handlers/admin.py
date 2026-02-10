@@ -129,7 +129,14 @@ async def admin_clients(callback: CallbackQuery, is_admin: bool):
         for client in clients[:5]:  # Показываем последних 5
             clients_text += f"👤 {client.name}\n"
             if client.telegram_id:
-                clients_text += f"   Telegram: @{client.telegram_id}\n"
+                telegram_label = "Не указан"
+                try:
+                    chat = await callback.bot.get_chat(client.telegram_id)
+                    if chat.username:
+                        telegram_label = f"@{chat.username}"
+                except Exception as e:
+                    print(f"Не удалось получить username для client.telegram_id={client.telegram_id}: {e}")
+                clients_text += f"   Telegram: {telegram_label}\n"
             if client.phone:
                 clients_text += f"   📞 {client.phone}\n"
             clients_text += "\n"
@@ -138,7 +145,8 @@ async def admin_clients(callback: CallbackQuery, is_admin: bool):
     
     await callback.message.edit_text(
         clients_text,
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(),
+        parse_mode="HTML"
     )
 
 async def admin_admins(callback: CallbackQuery, is_admin: bool):
@@ -152,14 +160,24 @@ async def admin_admins(callback: CallbackQuery, is_admin: bool):
     admins_text = "👨‍💼 <b>Управление администраторами</b>\n\n"
     for admin in admins:
         status = "✅ Активен" if admin.is_active else "❌ Неактивен"
+        telegram_label = "Не указан"
+        if admin.telegram_id:
+            try:
+                chat = await callback.bot.get_chat(admin.telegram_id)
+                if chat.username:
+                    telegram_label = f"@{chat.username}"
+            except Exception as e:
+                print(f"Не удалось получить username для admin.telegram_id={admin.telegram_id}: {e}")
+
         admins_text += f"👤 ID: {admin.id}\n"
-        admins_text += f"📱 Telegram: {admin.telegram_id or 'Не указан'}\n"
+        admins_text += f"📱 Telegram: {telegram_label}\n"
         admins_text += f"📧 VK: {admin.vk_id or 'Не указан'}\n"
         admins_text += f"📊 Статус: {status}\n\n"
     
     await callback.message.edit_text(
         admins_text,
-        reply_markup=get_admin_keyboard()
+        reply_markup=get_admin_keyboard(),
+        parse_mode="HTML"
     )
 
 async def bookings_today(callback: CallbackQuery, is_admin: bool):
