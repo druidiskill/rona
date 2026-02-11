@@ -1,5 +1,5 @@
 from aiogram import Dispatcher, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 from telegram_bot.keyboards import get_service_details_keyboard, get_back_to_service_keyboard
