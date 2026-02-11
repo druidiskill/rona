@@ -1320,7 +1320,8 @@ Telegram: {telegram_link}
         )
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Связаться с клиентом", url=contact_url)]
+            [InlineKeyboardButton(text="Связаться с клиентом", url=contact_url)],
+            [InlineKeyboardButton(text="Связаться во внутреннем чате", callback_data=f"support_reply_{telegram_id}")]
         ])
 
         admins = await admin_repo.get_all()

@@ -66,6 +66,17 @@ def _normalize_phone(phone: str | None) -> str | None:
         return digits
     return None
 
+def _format_phone_plus7(phone: str | None) -> str | None:
+    """Форматирует телефон в виде +7 XXX XXX XX XX, если возможно."""
+    if not phone:
+        return None
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) == 11 and digits.startswith(("7", "8")):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return str(phone)
+    return f"+7 {digits[:3]} {digits[3:6]} {digits[6:8]} {digits[8:10]}"
+
 async def admin_panel(callback: CallbackQuery, is_admin: bool, parse_mode: str = "HTML"):
     """Админ-панель"""
     if not is_admin:
@@ -283,7 +294,8 @@ async def admin_clients(callback: CallbackQuery, is_admin: bool):
                     print(f"Не удалось получить username для client.telegram_id={client.telegram_id}: {e}")
                 clients_text += f"   Telegram: {telegram_label}\n"
             if client.phone:
-                clients_text += f"   📞 {client.phone}\n"
+                phone_display = _format_phone_plus7(client.phone)
+                clients_text += f"   📞 {phone_display}\n"
             clients_text += "\n"
     else:
         clients_text += "Клиентов пока нет."
