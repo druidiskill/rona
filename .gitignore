@@ -8,5 +8,6 @@
 !README.md
 *pyc
 /.venv/
+/venv/
 .env*
 /tests/

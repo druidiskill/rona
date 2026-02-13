@@ -4,7 +4,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta, date
 
-from telegram_bot.keyboards import get_booking_form_keyboard, get_main_menu_keyboard, get_date_selection_keyboard, get_time_selection_keyboard
+from telegram_bot.keyboards import (
+    get_booking_form_keyboard,
+    get_main_menu_keyboard,
+    get_date_selection_keyboard,
+    get_time_selection_keyboard,
+    get_duration_selection_keyboard,
+)
 from telegram_bot.states import BookingStates
 from database import service_repo
 
@@ -21,18 +27,43 @@ except ImportError as e:
     print(f"[WARNING] Google Calendar недоступен: {e}")
     print("[INFO] Установите зависимости: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
 
-def _build_default_time_slots() -> list[dict]:
+def _build_default_time_slots(duration_minutes: int = 120, all_day: bool = False) -> list[dict]:
     """Стандартные слоты 9:00-21:00 при недоступности календаря."""
     time_slots = []
-    for hour in range(9, 21):
+    hour = 9
+    if all_day:
+        while hour < 20:
+            start_dt = datetime.strptime(f"{hour:02d}:00", "%H:%M")
+            end_dt = datetime.strptime("21:00", "%H:%M")
+            time_slots.append({
+                "start_time": start_dt.time(),
+                "end_time": end_dt.time(),
+                "is_available": True
+            })
+            hour += 1
+        return time_slots
+
+    slot_minutes = max(120, int(duration_minutes or 120))
+    while hour < 21:
+        start_dt = datetime.strptime(f"{hour:02d}:00", "%H:%M")
+        end_dt = start_dt + timedelta(minutes=slot_minutes)
+        if end_dt.hour > 21 or (end_dt.hour == 21 and end_dt.minute > 0):
+            break
         time_slots.append({
-            "start_time": datetime.strptime(f"{hour:02d}:00", "%H:%M").time(),
-            "end_time": datetime.strptime(f"{hour+1:02d}:00", "%H:%M").time(),
+            "start_time": start_dt.time(),
+            "end_time": end_dt.time(),
             "is_available": True
         })
+        hour += 1
     return time_slots
 
-async def _get_time_slots_for_date(target_date: date, service_id: int, service_name: str | None) -> tuple[list[dict], bool, str | None]:
+async def _get_time_slots_for_date(
+    target_date: date,
+    service_id: int,
+    service_name: str | None,
+    duration_minutes: int = 120,
+    all_day: bool = False,
+) -> tuple[list[dict], bool, str | None]:
     """
     Возвращает:
     - time_slots
@@ -80,8 +111,9 @@ async def _get_time_slots_for_date(target_date: date, service_id: int, service_n
             day_start = datetime.combine(target_date, work_start, tzinfo=tz)
             day_end = datetime.combine(target_date, work_end, tzinfo=tz)
 
-            slot_minutes = 60
+            slot_minutes = max(120, int(duration_minutes or 120))
             step_minutes = 60
+            min_slot_minutes = 120
 
             def _overlap_count(start: datetime, end: datetime, intervals: list[tuple[datetime, datetime]]) -> int:
                 count = 0
@@ -93,8 +125,9 @@ async def _get_time_slots_for_date(target_date: date, service_id: int, service_n
             def _generate_slots():
                 slots = []
                 cursor = day_start
-                while cursor + timedelta(minutes=slot_minutes) <= day_end:
-                    slots.append((cursor, cursor + timedelta(minutes=slot_minutes)))
+                while cursor + timedelta(minutes=min_slot_minutes) <= day_end:
+                    slot_end = day_end if all_day else cursor + timedelta(minutes=slot_minutes)
+                    slots.append((cursor, slot_end))
                     cursor += timedelta(minutes=step_minutes)
                 return slots
 
@@ -113,39 +146,53 @@ async def _get_time_slots_for_date(target_date: date, service_id: int, service_n
                 return (slots, True, None)
 
             # Для остальных услуг: считаем слоты по занятости этой услуги
-            slots = compute_free_slots(
-                busy,
-                day_start,
-                day_end,
-                slot_minutes=slot_minutes,
-                step_minutes=step_minutes,
-            )
-
             def _extra_available(slot_start: datetime) -> bool:
                 # Для всех услуг кроме id=9 проверяем свободен ли id=9 за час до начала (до 2 параллельных)
                 pre_start = slot_start - timedelta(hours=1)
                 pre_end = slot_start
+                # Старт в 09:00 разрешен: доп. час до открытия считается отдельной оплатой,
+                # поэтому не блокируем слот отсутствием периода 08:00-09:00 в рабочем окне.
                 if pre_start < day_start:
-                    return False
+                    return True
                 return _overlap_count(pre_start, pre_end, busy_extra) < 2
 
             filtered = []
-            for slot_start, slot_end in slots:
-                if _extra_available(slot_start):
-                    filtered.append(
-                        {
-                            "start_time": slot_start.time(),
-                            "end_time": slot_end.time(),
-                            "is_available": True,
-                        }
-                    )
+            if all_day:
+                for slot_start, slot_end in _generate_slots():
+                    if _overlap_count(slot_start, slot_end, busy) > 0:
+                        continue
+                    if _extra_available(slot_start):
+                        filtered.append(
+                            {
+                                "start_time": slot_start.time(),
+                                "end_time": slot_end.time(),
+                                "is_available": True,
+                            }
+                        )
+            else:
+                slots = compute_free_slots(
+                    busy,
+                    day_start,
+                    day_end,
+                    slot_minutes=slot_minutes,
+                    step_minutes=step_minutes,
+                )
+                for slot_start, slot_end in slots:
+                    if _extra_available(slot_start):
+                        filtered.append(
+                            {
+                                "start_time": slot_start.time(),
+                                "end_time": slot_end.time(),
+                                "is_available": True,
+                            }
+                        )
 
             return (filtered, True, None)
         except Exception as e:
             print(f"Ошибка получения слотов из Google Calendar: {e}")
-            return _build_default_time_slots(), False, str(e)
+            return _build_default_time_slots(duration_minutes, all_day=all_day), False, str(e)
 
-    return _build_default_time_slots(), False, None
+    return _build_default_time_slots(duration_minutes, all_day=all_day), False, None
 
 
 async def _is_booking_available(
@@ -223,7 +270,7 @@ async def _is_booking_available(
         pre_start = start_time - timedelta(hours=1)
         pre_end = start_time
         if pre_start < day_start:
-            return False, "За час до начала услуга недоступна для подготовки."
+            return True, None
         if _overlap_count(pre_start, pre_end, busy_extra) >= 2:
             return False, "За час до начала занято обеими бронями доп. услуги."
 
@@ -262,6 +309,19 @@ def _format_booking_guests(guests_value) -> str:
     return str(guests_value)
 
 
+def _format_extras_display(extras: list[str]) -> str:
+    """Человекочитаемое отображение выбранных доп. услуг."""
+    extras_labels = {
+        "photographer": "Фотограф",
+        "makeuproom": "Гримерка",
+        "fireplace": "Розжиг камина",
+        "rental": "Прокат: халат и полотенце",
+    }
+    if not extras:
+        return "Нет"
+    return ", ".join(extras_labels.get(extra, extra) for extra in extras)
+
+
 async def start_booking(callback: CallbackQuery, state: FSMContext):
     """Начало бронирования"""
     service_id = int(callback.data.split("_")[2])
@@ -291,7 +351,8 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
                 'name': existing_client.name,
                 'phone': phone_display,
                 'guests_count': None,
-                'duration': 60,  # По умолчанию 1 час
+                'duration': 120,  # По умолчанию 2 часа
+                'is_all_day': False,
                 'extras': [],
                 'email': existing_client.email,
                 'service_name': service.name  # Сохраняем название услуги в booking_data
@@ -308,7 +369,8 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
                 'name': None,
                 'phone': None,
                 'guests_count': None,
-                'duration': 60,  # По умолчанию 1 час
+                'duration': 120,  # По умолчанию 2 часа
+                'is_all_day': False,
                 'extras': [],
                 'email': None,
                 'service_name': service.name  # Сохраняем название услуги в booking_data
@@ -325,7 +387,7 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
     # Получаем service_name из booking_data или из state
     service_name = booking_data.get('service_name') or data.get('service_name', '')
     service_id = data.get('service_id')
-    duration_minutes = booking_data.get('duration', 60)
+    duration_minutes = booking_data.get('duration', 120)
     date_display = _format_booking_date(booking_data.get('date'))
     time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
     guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -348,7 +410,9 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
     extras_display = []
     extras_labels = {
         'photographer': '📸 Фотограф',
-        'makeuproom': '💄 Гримерка'
+        'makeuproom': '💄 Гримерка',
+        'fireplace': '🔥 Розжиг камина',
+        'rental': '🧺 Прокат (халат и полотенце)'
     }
     for extra in extras:
         extras_display.append(extras_labels.get(extra, extra))
@@ -428,7 +492,11 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
     try:
         selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(selected_date_obj, service_id, service_name)
+        duration_minutes = booking_data.get('duration', 120)
+        is_all_day = bool(booking_data.get('is_all_day'))
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
+            selected_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
+        )
 
         if not time_slots and used_calendar:
             await callback.message.edit_text(
@@ -443,9 +511,10 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {selected_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
-            "Доступные времена (слоты по 1 часу):",
+            f"Доступные времена ({duration_hint}):",
             reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
             parse_mode="HTML"
         )
@@ -520,7 +589,11 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
     try:
         prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(prev_date_obj, service_id, service_name)
+        duration_minutes = booking_data.get('duration', 120)
+        is_all_day = bool(booking_data.get('is_all_day'))
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
+            prev_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
+        )
 
         if not time_slots and used_calendar:
             await callback.message.edit_text(
@@ -535,9 +608,10 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {prev_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
-            "Доступные времена (слоты по 1 часу):",
+            f"Доступные времена ({duration_hint}):",
             reply_markup=get_time_selection_keyboard(service_id, time_slots, prev_date),
             parse_mode="HTML"
         )
@@ -568,7 +642,11 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
     try:
         next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(next_date_obj, service_id, service_name)
+        duration_minutes = booking_data.get('duration', 120)
+        is_all_day = bool(booking_data.get('is_all_day'))
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
+            next_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
+        )
 
         if not time_slots and used_calendar:
             await callback.message.edit_text(
@@ -583,9 +661,10 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {next_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
-            "Доступные времена (слоты по 1 часу):",
+            f"Доступные времена ({duration_hint}):",
             reply_markup=get_time_selection_keyboard(service_id, time_slots, next_date),
             parse_mode="HTML"
         )
@@ -610,16 +689,30 @@ async def confirm_time_selection(callback: CallbackQuery, state: FSMContext):
     time_slots = data.get('time_slots', [])
     
     # Получаем выбранное время из временных слотов
+    is_all_day = bool(booking_data.get('is_all_day'))
     if time_index < len(time_slots):
         selected_slot = time_slots[time_index]
         selected_time = f"{selected_slot['start_time'].strftime('%H:%M')} - {selected_slot['end_time'].strftime('%H:%M')}"
     else:
-        selected_time = "09:00 - 10:00"  # Fallback
+        duration_minutes = booking_data.get('duration', 120)
+        end_fallback = (datetime.strptime("09:00", "%H:%M") + timedelta(minutes=duration_minutes)).strftime("%H:%M")
+        selected_time = f"09:00 - {end_fallback}"  # Fallback
     
     # Сохраняем выбранное время в состоянии
     data = await state.get_data()
     booking_data = data.get('booking_data', {})
     booking_data['time'] = selected_time
+    if is_all_day and booking_data.get('date'):
+        try:
+            selected_date = datetime.strptime(booking_data['date'], "%Y-%m-%d").date()
+            start_str = selected_time.split(" - ")[0].strip()
+            start_dt = datetime.combine(selected_date, datetime.strptime(start_str, "%H:%M").time())
+            end_dt = datetime.combine(selected_date, datetime.strptime("21:00", "%H:%M").time())
+            duration_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            booking_data['duration'] = duration_minutes
+            booking_data['time'] = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+        except Exception as e:
+            print(f"Ошибка перерасчета длительности режима 'Весь день': {e}")
     # Сохраняем service_name если его еще нет в booking_data
     if 'service_name' not in booking_data:
         booking_data['service_name'] = data.get('service_name', '')
@@ -699,7 +792,7 @@ async def process_name_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 60)
+        duration_minutes = booking_data.get('duration', 120)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -716,7 +809,7 @@ async def process_name_input(message: Message, state: FSMContext):
         
         # Необязательные поля
         text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
-        text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
+        text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
         text += "Выберите параметр для заполнения:"
@@ -810,7 +903,7 @@ async def process_phone_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 60)
+        duration_minutes = booking_data.get('duration', 120)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -827,7 +920,7 @@ async def process_phone_input(message: Message, state: FSMContext):
         
         # Необязательные поля
         text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
-        text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
+        text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
         text += "Выберите параметр для заполнения:"
@@ -905,7 +998,7 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 60)
+        duration_minutes = booking_data.get('duration', 120)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -922,7 +1015,7 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         
         # Необязательные поля
         text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
-        text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
+        text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
         
         text += "Выберите параметр для заполнения:"
@@ -943,67 +1036,166 @@ async def start_duration_input(callback: CallbackQuery, state: FSMContext):
     service = await service_repo.get_by_id(service_id)
     
     if service:
-        min_duration = service.min_duration_minutes
+        min_duration = max(60, service.min_duration_minutes)
         step_duration = service.duration_step_minutes
-        duration_info = f"\n\n📋 <b>Информация:</b>\n• Минимальная продолжительность: {min_duration} мин.\n• Шаг: {step_duration} мин."
+        duration_info = f"\n\n📋 <b>Информация:</b>\n• Минимальная продолжительность: {min_duration} мин.\n• Бронирование только полными часами (60 минут)."
     else:
         duration_info = ""
     
-    await state.set_state(BookingStates.entering_duration)
+    await state.set_state(BookingStates.filling_form)
     await callback.message.edit_text(
-        f"⏰ <b>Введите продолжительность фотосессии:</b>\n\n"
-        f"Укажите продолжительность в минутах (кратно шагу).\n"
-        f"Например: 60, 90, 120{duration_info}",
+        f"⏰ <b>Выберите продолжительность фотосессии:</b>\n\n"
+        f"Доступны только полные часы.{duration_info}",
+        reply_markup=get_duration_selection_keyboard(service_id),
         parse_mode="HTML"
     )
+
+async def select_duration_option(callback: CallbackQuery, state: FSMContext):
+    """Выбор продолжительности из инлайн-клавиатуры."""
+    parts = callback.data.split("_")
+    if len(parts) < 5:
+        await callback.answer("Ошибка в данных", show_alert=True)
+        return
+
+    try:
+        duration = int(parts[4])
+    except ValueError:
+        await callback.answer("Неверное значение длительности", show_alert=True)
+        return
+    is_all_day = duration == 720
+
+    data = await state.get_data()
+    service_id = data.get('service_id')
+    if not service_id:
+        await callback.answer("Ошибка: ID услуги не найден", show_alert=True)
+        return
+
+    if duration < 120:
+        await callback.answer("Минимум 2 часа", show_alert=True)
+        return
+
+    if duration > 720:
+        await callback.answer("Максимум: весь день", show_alert=True)
+        return
+
+    if duration % 60 != 0:
+        await callback.answer("Доступны только полные часы", show_alert=True)
+        return
+
+    service = await service_repo.get_by_id(service_id)
+    if service:
+        min_duration = max(120, int(service.min_duration_minutes or 120))
+        if min_duration % 60 != 0:
+            min_duration = ((min_duration // 60) + 1) * 60
+        if duration < min_duration:
+            await callback.answer(
+                f"Минимальная продолжительность: {min_duration // 60} ч.",
+                show_alert=True
+            )
+            return
+
+    booking_data = data.get('booking_data', {})
+    if booking_data.get('date') and booking_data.get('time'):
+        try:
+            selected_date = datetime.strptime(booking_data['date'], "%Y-%m-%d").date()
+            start_time_str = booking_data['time'].split(' - ')[0]
+            start_time = datetime.strptime(start_time_str, "%H:%M").time()
+            start_dt = datetime.combine(selected_date, start_time)
+            service_name = booking_data.get('service_name') or data.get('service_name', '')
+            duration_for_check = duration
+            if is_all_day:
+                end_all_day = datetime.combine(selected_date, datetime.strptime("21:00", "%H:%M").time())
+                duration_for_check = int((end_all_day - start_dt).total_seconds() // 60)
+                if duration_for_check < 120:
+                    await callback.answer(
+                        "Для режима 'Весь день' выберите время не позже 19:00.",
+                        show_alert=True
+                    )
+                    return
+            ok, reason = await _is_booking_available(
+                selected_date,
+                start_dt,
+                duration_for_check,
+                service_id,
+                service_name,
+            )
+            if not ok:
+                await callback.answer(
+                    "Выбранная продолжительность недоступна для текущего времени.",
+                    show_alert=True
+                )
+                return
+        except Exception as e:
+            print(f"Ошибка проверки доступности при выборе длительности: {e}")
+
+    booking_data['is_all_day'] = is_all_day
+    if is_all_day and booking_data.get('date') and booking_data.get('time'):
+        selected_date = datetime.strptime(booking_data['date'], "%Y-%m-%d").date()
+        start_time_str = booking_data['time'].split(' - ')[0]
+        start_time = datetime.strptime(start_time_str, "%H:%M").time()
+        start_dt = datetime.combine(selected_date, start_time)
+        end_all_day = datetime.combine(selected_date, datetime.strptime("21:00", "%H:%M").time())
+        duration = int((end_all_day - start_dt).total_seconds() // 60)
+        booking_data['duration'] = duration
+        booking_data['time'] = f"{start_dt.strftime('%H:%M')} - {end_all_day.strftime('%H:%M')}"
+    else:
+        booking_data['duration'] = duration
+    if 'service_name' not in booking_data:
+        booking_data['service_name'] = data.get('service_name', '')
+    await state.update_data(booking_data=booking_data)
+    await state.set_state(BookingStates.filling_form)
+    await show_booking_form(callback, state)
 
 async def process_duration_input(message: Message, state: FSMContext):
     """Обработка введенной продолжительности"""
     duration_text = message.text.strip()
-    
-    # Проверяем, что введено число
+
     try:
         duration = int(duration_text)
     except ValueError:
         await message.answer(
             "❌ <b>Неверный формат числа</b>\n\n"
             "Пожалуйста, введите продолжительность числом (в минутах).\n"
-            "Например: 60, 90, 120",
+            "Например: 60, 120, 180",
             parse_mode="HTML"
         )
         return
-    
-    # Проверяем минимальную продолжительность (минимум 30 минут)
-    if duration < 30:
+
+    if duration < 120:
         await message.answer(
             "❌ <b>Слишком короткая продолжительность</b>\n\n"
-            "Минимальная продолжительность: 30 минут.\n"
+            "Минимальная продолжительность: 120 минут (2 часа).\n"
             "Пожалуйста, введите корректную продолжительность.",
             parse_mode="HTML"
         )
         return
-    
-    # Проверяем максимальную продолжительность (максимум 8 часов = 480 минут)
-    if duration > 480:
+
+    if duration > 720:
         await message.answer(
             "❌ <b>Слишком долгая продолжительность</b>\n\n"
-            "Максимальная продолжительность: 480 минут (8 часов).\n"
-            "Для более длительных съемок свяжитесь с нами по телефону.",
+            "Максимальная продолжительность: 720 минут (весь день).\n"
+            "Для более длительных съемок свяжитесь с администратором.",
             parse_mode="HTML"
         )
         return
-    
-    # Получаем информацию об услуге для проверки шага
+
+    if duration % 60 != 0:
+        await message.answer(
+            "❌ <b>Бронируются только полные часы</b>\n\n"
+            "Доступные значения: 60, 120, 180, 240...",
+            parse_mode="HTML"
+        )
+        return
+
     data = await state.get_data()
     service_id = data.get('service_id')
+
     if service_id:
-        from database import service_repo
         service = await service_repo.get_by_id(service_id)
         if service:
-            step = service.duration_step_minutes
-            min_duration = service.min_duration_minutes
-            
-            # Проверяем, что продолжительность соответствует шагу
+            min_duration = max(120, int(service.min_duration_minutes or 120))
+            if min_duration % 60 != 0:
+                min_duration = ((min_duration // 60) + 1) * 60
             if duration < min_duration:
                 await message.answer(
                     f"❌ <b>Минимальная продолжительность: {min_duration} мин.</b>\n\n"
@@ -1011,21 +1203,8 @@ async def process_duration_input(message: Message, state: FSMContext):
                     parse_mode="HTML"
                 )
                 return
-            
-            # Проверяем, что продолжительность кратна шагу
-            if (duration - min_duration) % step != 0:
-                nearest_valid = min_duration + ((duration - min_duration) // step) * step
-                await message.answer(
-                    f"❌ <b>Продолжительность должна быть кратной шагу ({step} мин.)</b>\n\n"
-                    f"Доступные значения: {min_duration}, {min_duration + step}, {min_duration + step * 2}...\n"
-                    f"Ближайшее корректное значение: {nearest_valid} мин.",
-                    parse_mode="HTML"
-                )
-                return
-    
-    # Сохраняем продолжительность в состоянии
+
     booking_data = data.get('booking_data', {})
-    # Проверяем доступность времени с новой продолжительностью, если уже выбраны дата и время
     if booking_data.get('date') and booking_data.get('time'):
         try:
             selected_date = datetime.strptime(booking_data['date'], "%Y-%m-%d").date()
@@ -1053,48 +1232,39 @@ async def process_duration_input(message: Message, state: FSMContext):
             print(f"Ошибка проверки доступности при смене длительности: {e}")
 
     booking_data['duration'] = duration
-    # Сохраняем service_name если его еще нет в booking_data
+    booking_data['is_all_day'] = False
     if 'service_name' not in booking_data:
         booking_data['service_name'] = data.get('service_name', '')
     await state.update_data(booking_data=booking_data)
-    
-    # Возвращаемся к форме бронирования
+
     await state.set_state(BookingStates.filling_form)
-    
-    # Получаем service_id из состояния
+
     if service_id:
-        # Показываем форму бронирования как новое сообщение
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 60)
+        duration_minutes = booking_data.get('duration', 120)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
-        
+
         text = f"📝 <b>Бронирование услуги: {service_name}</b>\n\n"
         text += "📋 <b>Заполните данные для бронирования:</b>\n\n"
-        
-        # Обязательные поля
         text += f"✅ <b>Дата:</b> {date_display}\n"
         text += f"✅ <b>Время:</b> {time_display}\n"
         text += f"✅ <b>Имя:</b> {booking_data.get('name', 'Не указано')}\n"
         text += f"✅ <b>Номер телефона:</b> {booking_data.get('phone', 'Не указан')}\n"
         text += f"✅ <b>Количество гостей:</b> {guests_display}\n"
-        
-        # Необязательные поля
         text += f"✅ <b>Продолжительность:</b> {duration_minutes} мин.\n"
-        text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
+        text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
         text += f"📧 <b>E-mail:</b> {booking_data.get('email', 'Не указан')}\n\n"
-        
         text += "Выберите параметр для заполнения:"
-        
+
         await message.answer(
             text,
             reply_markup=get_booking_form_keyboard(service_id, booking_data),
             parse_mode="HTML"
         )
-
 async def start_email_input(callback: CallbackQuery, state: FSMContext):
     """Начало ввода email"""
     parts = callback.data.split("_")
@@ -1150,7 +1320,7 @@ async def process_email_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 60)
+        duration_minutes = booking_data.get('duration', 120)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -1167,7 +1337,7 @@ async def process_email_input(message: Message, state: FSMContext):
         
         # Необязательные поля
         text += f"✅ <b>Продолжительность:</b> {duration_minutes} мин.\n"
-        text += f"➕ <b>Доп. услуги:</b> {', '.join(booking_data.get('extras', [])) if booking_data.get('extras') else 'Нет'}\n"
+        text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
         email_display = booking_data.get('email', 'Не указан')
         if email_display:
             text += f"✅ <b>E-mail:</b> {email_display}\n"
@@ -1207,8 +1377,10 @@ async def start_extras_input(callback: CallbackQuery, state: FSMContext):
     
     # Список доступных дополнительных услуг
     available_extras = {
-        'photographer': '📸 Фотограф (+2000₽)',
-        'makeuproom': '💄 Гримерка (1000₽/час)'
+        'photographer': '📸 Фотограф (11 500₽: аренда зала + работа фотографа + обработанные фото)',
+        'makeuproom': '💄 Гримерка (200/250₽/час)',
+        'fireplace': '🔥 Розжиг камина (400₽)',
+        'rental': '🧺 Прокат: белый махровый халат и полотенце (200₽)'
     }
     
     # Формируем текст с текущим выбором
@@ -1220,6 +1392,7 @@ async def start_extras_input(callback: CallbackQuery, state: FSMContext):
         text += f"{status} {label}\n"
     
     text += "\nНажмите на услугу, чтобы добавить/убрать её."
+    text += "\n\n<i>Важно: гримерка до 9:00 и после 21:00 доступна за доп. плату (двойная аренда зала и гримерной).</i>"
     
     # Создаем клавиатуру для выбора
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -1343,7 +1516,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     selected_time_str = booking_data['time'].split(' - ')[0]  # Берем время начала
     selected_time = datetime.strptime(selected_time_str, "%H:%M").time()
     selected_datetime = datetime.combine(selected_date, selected_time)
-    duration_minutes = booking_data.get('duration', 60)
+    duration_minutes = booking_data.get('duration', 120)
     end_datetime = selected_datetime + timedelta(minutes=duration_minutes)
     time_range_display = f"{selected_datetime.strftime('%H:%M')} - {end_datetime.strftime('%H:%M')}"
     
@@ -1392,6 +1565,10 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
                 extras_text.append("Фотограф")
             if "makeuproom" in extras:
                 extras_text.append("Гримерка")
+            if "fireplace" in extras:
+                extras_text.append("Розжиг камина")
+            if "rental" in extras:
+                extras_text.append("Прокат: халат и полотенце")
             extras_display = ", ".join(extras_text) if extras_text else "Нет"
 
             # Создаем описание события
@@ -1433,7 +1610,7 @@ Service ID: {service_id}
             calendar_service = GoogleCalendarService()
             print("[CALENDAR] Вызов calendar_service.create_event...")
             result = await calendar_service.create_event(
-                title=f"Фотосессия: {service_name}",
+                title=f"{service_name}",
                 description=event_description,
                 start_time=event_start,
                 end_time=event_end
@@ -1512,7 +1689,9 @@ Service ID: {service_id}
         extras = booking_data.get('extras', [])
         extras_labels = {
             'photographer': 'Фотограф',
-            'makeuproom': 'Гримерка'
+            'makeuproom': 'Гримерка',
+            'fireplace': 'Розжиг камина',
+            'rental': 'Прокат: халат и полотенце'
         }
         extras_display = ", ".join(extras_labels.get(e, e) for e in extras) if extras else "Нет"
 
@@ -1608,6 +1787,7 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(start_guests_count_input, F.data.startswith("booking_guests_"))
     dp.message.register(process_guests_count_input, BookingStates.entering_guests_count)
     dp.callback_query.register(start_duration_input, F.data.startswith("booking_duration_"))
+    dp.callback_query.register(select_duration_option, F.data.startswith("booking_set_duration_"))
     dp.message.register(process_duration_input, BookingStates.entering_duration)
     dp.callback_query.register(start_email_input, F.data.startswith("booking_email_"))
     dp.message.register(process_email_input, BookingStates.entering_email)
@@ -1618,3 +1798,10 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(start_extras_input, F.data.startswith("booking_extras_"))
     dp.callback_query.register(confirm_booking, F.data.startswith("booking_confirm_"))
     dp.callback_query.register(cancel_booking, F.data.startswith("booking_cancel_"))
+
+
+
+
+
+
+

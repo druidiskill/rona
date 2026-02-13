@@ -1,4 +1,4 @@
-from aiogram import Dispatcher, F
+﻿from aiogram import Dispatcher, F
 from aiogram.types import CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
@@ -24,18 +24,29 @@ async def show_service_details(callback: CallbackQuery, state: FSMContext):
 💰 <b>Цены:</b>
 • Будни: {service.price_min}₽
 • Выходные: {service.price_min_weekend}₽
+"""
+
+    if service.id != 9:
+        description += f"""
 
 👥 <b>Количество людей:</b>
 • До {service.max_num_clients} чел. - базовая цена
 • Дополнительно: {service.price_for_extra_client}₽/чел.
+"""
+
+    description += f"""
 
 ⏰ <b>Длительность:</b>
 • Минимум: {service.min_duration_minutes} мин.
-• Шаг: {service.duration_step_minutes} мин.
+• Бронирование только полными часами.
 
 📅 <b>Дополнительные услуги:</b>
-• Фотограф: +2000₽
-• Гримерка: 1000₽/час
+• Фотограф: 11 500₽ (включает аренду зала, работу фотографа и обработанные фото)
+• Гримерка: 200/250₽/час
+• Розжиг камина: 400₽
+• Прокат (белый махровый халат и полотенце): 200₽
+
+<i>Важно: до 9:00 и после 21:00 действует двойная аренда зала и гримерной.</i>
     """
     
     photo_files = list_service_photos(service_id)
@@ -159,3 +170,6 @@ def register_services_handlers(dp: Dispatcher):
     # dp.callback_query.register(start_booking, F.data.startswith("book_service_"))
     dp.callback_query.register(show_photos, F.data.startswith("photos_"))
     dp.callback_query.register(back_to_service_from_photos, F.data.startswith("back_to_service_"))
+
+
+

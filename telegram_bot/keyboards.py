@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+﻿from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from typing import List
 from database.models import Service, TimeSlot
 from datetime import datetime, timedelta
@@ -160,6 +160,33 @@ def get_time_selection_keyboard(service_id: int, time_slots: list, selected_date
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"booking_back_from_time_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+def get_duration_selection_keyboard(service_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора продолжительности (2-8 часов + весь день)."""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="2 часа", callback_data=f"booking_set_duration_{service_id}_120"),
+            InlineKeyboardButton(text="3 часа", callback_data=f"booking_set_duration_{service_id}_180"),
+        ],
+        [
+            InlineKeyboardButton(text="4 часа", callback_data=f"booking_set_duration_{service_id}_240"),
+            InlineKeyboardButton(text="5 часов", callback_data=f"booking_set_duration_{service_id}_300"),
+        ],
+        [
+            InlineKeyboardButton(text="6 часов", callback_data=f"booking_set_duration_{service_id}_360"),
+            InlineKeyboardButton(text="7 часов", callback_data=f"booking_set_duration_{service_id}_420"),
+        ],
+        [
+            InlineKeyboardButton(text="8 часов", callback_data=f"booking_set_duration_{service_id}_480"),
+        ],
+        [
+            InlineKeyboardButton(text="Весь день", callback_data=f"booking_set_duration_{service_id}_720"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Назад", callback_data=f"service_{service_id}"),
+        ],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 
 
@@ -243,10 +270,8 @@ def get_service_edit_keyboard(service_id: int) -> InlineKeyboardMarkup:
 def get_contacts_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура контактов"""
     keyboard = [
-        [InlineKeyboardButton(text="📞 Позвонить", url="tel:+79001234567")],
-        [InlineKeyboardButton(text="💬 WhatsApp", url="https://wa.me/79001234567")],
-        [InlineKeyboardButton(text="📧 Email", url="mailto:info@studio.ru")],
-        [InlineKeyboardButton(text="🌐 Сайт", url="https://studio.ru")],
+        [InlineKeyboardButton(text="📧 Email", url="mailto:rona.photostudio.petergof@gmail.com")],
+        [InlineKeyboardButton(text="🌐 Сайт", url="https://innasuvorova.ru/rona_photostudio")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -261,13 +286,36 @@ def get_my_bookings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def _has_photographer_extra(event: dict) -> bool:
+    """Определяет, выбрана ли доп. услуга фотографа по описанию события."""
+    description = (event.get("description") or "").lower()
+    if not description:
+        return False
+    return (
+        "нужен ли фотограф?" in description and "да" in description
+    ) or ("дополнительные услуги" in description and "фотограф" in description)
+
+
+def _display_summary_for_list_button(event: dict) -> str:
+    """
+    Для списков бронирований убирает префикс 'Фотосессия:',
+    если услуга фотографа не выбрана.
+    """
+    summary = (event.get("summary") or "Без названия").strip()
+    prefix = "Фотосессия:"
+    if summary.startswith(prefix) and not _has_photographer_extra(event):
+        cleaned = summary[len(prefix):].strip()
+        return cleaned or "Без названия"
+    return summary
+
+
 def get_admin_future_bookings_keyboard(events: list[dict]) -> InlineKeyboardMarkup:
     """Клавиатура списка будущих бронирований для админа."""
     keyboard = []
     for event in events:
         event_id = event.get("id")
         start = event.get("start")
-        summary = event.get("summary", "Без названия")
+        summary = _display_summary_for_list_button(event)
         if not event_id or not start:
             continue
         button_text = f"🕐 {start.strftime('%d.%m %H:%M')} — {summary}"
@@ -306,7 +354,7 @@ def get_active_bookings_list_keyboard(events: list[dict]) -> InlineKeyboardMarku
     for event in events:
         event_id = event.get("id")
         start = event.get("start")
-        summary = event.get("summary", "Без названия")
+        summary = _display_summary_for_list_button(event)
         if not event_id or not start:
             continue
         button_text = f"✏️ {start.strftime('%d.%m %H:%M')} — {summary}"
@@ -440,5 +488,6 @@ def get_back_to_service_keyboard(service_id: int, message_ids: str = ""):
         [InlineKeyboardButton(text="🔙 Назад к услуге", callback_data=f"back_to_service_{service_id}_{message_ids}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 

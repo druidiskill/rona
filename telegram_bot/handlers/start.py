@@ -201,9 +201,8 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             "📞 <b>Контакты:</b>\n\n"
             "📍 Адрес: <a href=\"https://yandex.ru/maps/-/CLbv7S8T\">улица Володи Дубинина, 3, Санкт-Петербург</a>\n"
             "🌐 Сайт: <a href=\"https://innasuvorova.ru/rona_photostudio\">Наш сайт</a>\n"
-            "📱 Телефон: <a href=\"tel:+79119854008\">+7(911)985-40-08</a>\n"
-            "✉️ Email: zvezda-mk@yandex.ru\n"
-            "🕒 Время работы: 9:00 - 21:00",
+            "✉️ Email: rona.photostudio.petergof@gmail.com\n"
+            "🕒 Время работы: с 9:00 до 21:00 по предварительному бронированию",
             reply_markup=get_main_menu_keyboard(),
             parse_mode="HTML"
         )
@@ -337,3 +336,5 @@ def register_start_handlers(dp: Dispatcher):
     ]))
     dp.callback_query.register(active_booking_open_callback, F.data.startswith("active_booking_open_"))
     dp.callback_query.register(active_booking_cancel_callback, F.data.startswith("active_booking_cancel_"))
+
+

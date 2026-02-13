@@ -1,4 +1,4 @@
-from aiogram import Dispatcher, F
+﻿from aiogram import Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -399,25 +399,18 @@ async def contacts_callback(callback: CallbackQuery):
     contacts_text = """
 📞 <b>Контакты фотостудии</b>
 
-<b>Телефон:</b> +7 (900) 123-45-67
-<b>WhatsApp:</b> +7 (900) 123-45-67
-<b>Email:</b> info@studio.ru
-<b>Сайт:</b> https://studio.ru
+<b>Email:</b> rona.photostudio.petergof@gmail.com
+<b>Сайт:</b> https://innasuvorova.ru/rona_photostudio
 
-<b>Адрес:</b> г. Москва, ул. Примерная, д. 1
-<b>Время работы:</b> 9:00 - 21:00 (ежедневно)
-
-<b>Как добраться:</b>
-🚇 Метро "Примерная" (5 мин пешком)
-🚌 Автобусы: 123, 456 (остановка "Студия")
-🚗 Парковка: бесплатная
+<b>Адрес:</b> улица Володи Дубинина, 3, Санкт-Петербург
+<b>Время работы:</b> с 9:00 до 21:00 по предварительному бронированию
     """
-    
+
     await callback.message.edit_text(
         contacts_text,
-        reply_markup=get_contacts_keyboard()
+        reply_markup=get_contacts_keyboard(),
+        parse_mode="HTML"
     )
-
 async def my_bookings_callback(callback: CallbackQuery):
     """Обработчик кнопки моих бронирований"""
     await callback.message.edit_text(
@@ -463,3 +456,5 @@ def register_common_handlers(dp: Dispatcher):
 
     dp.message.register(unknown_message)
     dp.callback_query.register(unknown_callback)
+
+
