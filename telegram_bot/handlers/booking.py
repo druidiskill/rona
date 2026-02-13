@@ -12,13 +12,22 @@ from telegram_bot.keyboards import (
     get_duration_selection_keyboard,
 )
 from telegram_bot.states import BookingStates
+from telegram_bot.services.booking_calendar import (
+    build_default_time_slots as svc_build_default_time_slots,
+    get_time_slots_for_date as svc_get_time_slots_for_date,
+    is_booking_available as svc_is_booking_available,
+)
+from telegram_bot.services.booking_formatters import (
+    format_booking_date as svc_format_booking_date,
+    format_booking_time_range as svc_format_booking_time_range,
+    format_booking_guests as svc_format_booking_guests,
+    format_extras_display as svc_format_extras_display,
+)
 from database import service_repo
 
 # Опциональный импорт Google Calendar
 try:
     from google_calendar.calendar_service import GoogleCalendarService
-    from google_calendar.calendar_freebusy import compute_free_slots
-    from zoneinfo import ZoneInfo
     CALENDAR_AVAILABLE = True
     print("[OK] Google Calendar импортирован успешно")
 except ImportError as e:
@@ -28,34 +37,7 @@ except ImportError as e:
     print("[INFO] Установите зависимости: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
 
 def _build_default_time_slots(duration_minutes: int = 120, all_day: bool = False) -> list[dict]:
-    """Стандартные слоты 9:00-21:00 при недоступности календаря."""
-    time_slots = []
-    hour = 9
-    if all_day:
-        while hour < 20:
-            start_dt = datetime.strptime(f"{hour:02d}:00", "%H:%M")
-            end_dt = datetime.strptime("21:00", "%H:%M")
-            time_slots.append({
-                "start_time": start_dt.time(),
-                "end_time": end_dt.time(),
-                "is_available": True
-            })
-            hour += 1
-        return time_slots
-
-    slot_minutes = max(120, int(duration_minutes or 120))
-    while hour < 21:
-        start_dt = datetime.strptime(f"{hour:02d}:00", "%H:%M")
-        end_dt = start_dt + timedelta(minutes=slot_minutes)
-        if end_dt.hour > 21 or (end_dt.hour == 21 and end_dt.minute > 0):
-            break
-        time_slots.append({
-            "start_time": start_dt.time(),
-            "end_time": end_dt.time(),
-            "is_available": True
-        })
-        hour += 1
-    return time_slots
+    return svc_build_default_time_slots(duration_minutes=duration_minutes, all_day=all_day)
 
 async def _get_time_slots_for_date(
     target_date: date,
@@ -64,135 +46,13 @@ async def _get_time_slots_for_date(
     duration_minutes: int = 120,
     all_day: bool = False,
 ) -> tuple[list[dict], bool, str | None]:
-    """
-    Возвращает:
-    - time_slots
-    - used_calendar: True, если пытались брать слоты из календаря
-    - error_text: текст ошибки календаря (если была)
-    """
-    if CALENDAR_AVAILABLE and GoogleCalendarService:
-        try:
-            calendar_service = GoogleCalendarService()
-            # Получаем события на день и фильтруем по услуге
-            work_start = datetime.strptime("09:00", "%H:%M").time()
-            work_end = datetime.strptime("21:00", "%H:%M").time()
-            day_start = datetime.combine(target_date, work_start)
-            day_end = datetime.combine(target_date, work_end)
-            events = await calendar_service.list_events(day_start, day_end)
-
-            service_tag = f"Service ID: {service_id}"
-            extra_service_tag = "Service ID: 9"
-            linked_service_tag = "Linked Service ID:"
-            busy = []
-            busy_extra = []
-            busy_extra_linked = []
-            for event in events:
-                desc = event.get("description") or ""
-                summary = event.get("summary") or ""
-
-                start = event.get("start")
-                end = event.get("end")
-                if not start or not end:
-                    continue
-                if start.tzinfo is None:
-                    start = start.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-                if end.tzinfo is None:
-                    end = end.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-
-                is_extra_service = extra_service_tag in desc
-                if is_extra_service:
-                    busy_extra.append((start, end))
-                    continue
-
-                if (service_tag in desc) or (service_name and service_name in summary):
-                    busy.append((start, end))
-
-            tz = ZoneInfo(calendar_service.time_zone)
-            day_start = datetime.combine(target_date, work_start, tzinfo=tz)
-            day_end = datetime.combine(target_date, work_end, tzinfo=tz)
-
-            slot_minutes = max(120, int(duration_minutes or 120))
-            step_minutes = 60
-            min_slot_minutes = 120
-
-            def _overlap_count(start: datetime, end: datetime, intervals: list[tuple[datetime, datetime]]) -> int:
-                count = 0
-                for b_start, b_end in intervals:
-                    if start < b_end and end > b_start:
-                        count += 1
-                return count
-
-            def _generate_slots():
-                slots = []
-                cursor = day_start
-                while cursor + timedelta(minutes=min_slot_minutes) <= day_end:
-                    slot_end = day_end if all_day else cursor + timedelta(minutes=slot_minutes)
-                    slots.append((cursor, slot_end))
-                    cursor += timedelta(minutes=step_minutes)
-                return slots
-
-            if service_id == 9:
-                # Для услуги id=9 допускаем до 2 параллельных бронирований
-                slots = []
-                for slot_start, slot_end in _generate_slots():
-                    if _overlap_count(slot_start, slot_end, busy) < 2:
-                        slots.append(
-                            {
-                                "start_time": slot_start.time(),
-                                "end_time": slot_end.time(),
-                                "is_available": True,
-                            }
-                        )
-                return (slots, True, None)
-
-            # Для остальных услуг: считаем слоты по занятости этой услуги
-            def _extra_available(slot_start: datetime) -> bool:
-                # Для всех услуг кроме id=9 проверяем свободен ли id=9 за час до начала (до 2 параллельных)
-                pre_start = slot_start - timedelta(hours=1)
-                pre_end = slot_start
-                # Старт в 09:00 разрешен: доп. час до открытия считается отдельной оплатой,
-                # поэтому не блокируем слот отсутствием периода 08:00-09:00 в рабочем окне.
-                if pre_start < day_start:
-                    return True
-                return _overlap_count(pre_start, pre_end, busy_extra) < 2
-
-            filtered = []
-            if all_day:
-                for slot_start, slot_end in _generate_slots():
-                    if _overlap_count(slot_start, slot_end, busy) > 0:
-                        continue
-                    if _extra_available(slot_start):
-                        filtered.append(
-                            {
-                                "start_time": slot_start.time(),
-                                "end_time": slot_end.time(),
-                                "is_available": True,
-                            }
-                        )
-            else:
-                slots = compute_free_slots(
-                    busy,
-                    day_start,
-                    day_end,
-                    slot_minutes=slot_minutes,
-                    step_minutes=step_minutes,
-                )
-                for slot_start, slot_end in slots:
-                    if _extra_available(slot_start):
-                        filtered.append(
-                            {
-                                "start_time": slot_start.time(),
-                                "end_time": slot_end.time(),
-                                "is_available": True,
-                            }
-                        )
-
-            return (filtered, True, None)
-        except Exception as e:
-            print(f"Ошибка получения слотов из Google Calendar: {e}")
-            return _build_default_time_slots(duration_minutes, all_day=all_day), False, str(e)
-
-    return _build_default_time_slots(duration_minutes, all_day=all_day), False, None
+    return await svc_get_time_slots_for_date(
+        target_date=target_date,
+        service_id=service_id,
+        service_name=service_name,
+        duration_minutes=duration_minutes,
+        all_day=all_day,
+    )
 
 
 async def _is_booking_available(
@@ -202,124 +62,28 @@ async def _is_booking_available(
     service_id: int,
     service_name: str | None,
 ) -> tuple[bool, str | None]:
-    """Проверяет доступность конкретного интервала для выбранной услуги."""
-    if not (CALENDAR_AVAILABLE and GoogleCalendarService):
-        return True, None
-
-    try:
-        calendar_service = GoogleCalendarService()
-        tz = ZoneInfo(calendar_service.time_zone)
-        work_start = datetime.strptime("09:00", "%H:%M").time()
-        work_end = datetime.strptime("21:00", "%H:%M").time()
-        day_start = datetime.combine(target_date, work_start, tzinfo=tz)
-        day_end = datetime.combine(target_date, work_end, tzinfo=tz)
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=tz)
-        events = await calendar_service.list_events(day_start, day_end)
-
-        service_tag = f"Service ID: {service_id}"
-        extra_service_tag = "Service ID: 9"
-        linked_service_tag = "Linked Service ID:"
-
-        busy = []
-        busy_extra = []
-        busy_extra_linked = []
-        for event in events:
-            desc = event.get("description") or ""
-            summary = event.get("summary") or ""
-            start = event.get("start")
-            end = event.get("end")
-            if not start or not end:
-                continue
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-
-            is_extra_service = extra_service_tag in desc
-            if is_extra_service:
-                busy_extra.append((start, end))
-                continue
-
-            if (service_tag in desc) or (service_name and service_name in summary):
-                busy.append((start, end))
-
-        def _overlap_count(start: datetime, end: datetime, intervals: list[tuple[datetime, datetime]]) -> int:
-            count = 0
-            for b_start, b_end in intervals:
-                if start < b_end and end > b_start:
-                    count += 1
-            return count
-
-        end_time = start_time + timedelta(minutes=duration_minutes)
-
-        # Рабочие часы
-        if start_time < day_start or end_time > day_end:
-            return False, "Выбранный интервал выходит за пределы рабочего времени."
-
-        if service_id == 9:
-            if _overlap_count(start_time, end_time, busy) >= 2:
-                return False, "Выбранное время пересекается с двумя бронированиями этой услуги."
-            return True, None
-
-        # Для остальных услуг: не пересекаться с этой услугой
-        if _overlap_count(start_time, end_time, busy) > 0:
-            return False, "Выбранное время пересекается с другой бронью этой услуги."
-
-        # Проверяем доп. услугу id=9 за час до начала (до 2 параллельных)
-        pre_start = start_time - timedelta(hours=1)
-        pre_end = start_time
-        if pre_start < day_start:
-            return True, None
-        if _overlap_count(pre_start, pre_end, busy_extra) >= 2:
-            return False, "За час до начала занято обеими бронями доп. услуги."
-
-        return True, None
-    except Exception as e:
-        print(f"Ошибка проверки доступности интервала: {e}")
-        return True, None
+    return await svc_is_booking_available(
+        target_date=target_date,
+        start_time=start_time,
+        duration_minutes=duration_minutes,
+        service_id=service_id,
+        service_name=service_name,
+    )
 
 def _format_booking_date(date_value) -> str:
-    """Формат даты для UI формы бронирования."""
-    if not date_value:
-        return "Не выбрано"
-    try:
-        return datetime.strptime(str(date_value), "%Y-%m-%d").strftime("%d.%m.%Y")
-    except Exception:
-        return str(date_value)
+    return svc_format_booking_date(date_value)
 
 
 def _format_booking_time_range(time_value, duration_minutes: int) -> str:
-    """Формат интервала времени с учетом длительности."""
-    if not time_value:
-        return "Не выбрано"
-    try:
-        start_str = str(time_value).split(" - ")[0].strip()
-        start_dt = datetime.strptime(start_str, "%H:%M")
-        end_dt = start_dt + timedelta(minutes=int(duration_minutes or 60))
-        return f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
-    except Exception:
-        return str(time_value)
+    return svc_format_booking_time_range(time_value, duration_minutes)
 
 
 def _format_booking_guests(guests_value) -> str:
-    """Формат количества гостей с защитой от None."""
-    if guests_value is None:
-        return "Не указано"
-    return str(guests_value)
+    return svc_format_booking_guests(guests_value)
 
 
 def _format_extras_display(extras: list[str]) -> str:
-    """Человекочитаемое отображение выбранных доп. услуг."""
-    extras_labels = {
-        "photographer": "Фотограф",
-        "makeuproom": "Гримерка",
-        "fireplace": "Розжиг камина",
-        "rental": "Прокат: халат и полотенце",
-    }
-    if not extras:
-        return "Нет"
-    return ", ".join(extras_labels.get(extra, extra) for extra in extras)
+    return svc_format_extras_display(extras)
 
 
 async def start_booking(callback: CallbackQuery, state: FSMContext):

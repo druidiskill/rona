@@ -13,45 +13,11 @@ from telegram_bot.keyboards import (
 )
 from telegram_bot.states import BookingStates
 from database import client_service, service_repo
-
-# Опциональный импорт Google Calendar
-try:
-    from google_calendar.calendar_service import GoogleCalendarService
-    CALENDAR_AVAILABLE = True
-except Exception as e:
-    GoogleCalendarService = None
-    CALENDAR_AVAILABLE = False
-    print(f"[WARNING] Google Calendar недоступен: {e}")
-
-
-def _format_phone_for_search(phone: str | None) -> str | None:
-    if not phone:
-        return None
-    phone = str(phone).strip()
-    if len(phone) == 10 and phone.isdigit():
-        return f"+7 {phone[:3]} {phone[3:6]} {phone[6:8]} {phone[8:10]}"
-    return phone
-
-
-async def _get_user_calendar_events(callback: CallbackQuery, period_start: datetime, period_end: datetime):
-    """Возвращает события пользователя из календаря по телефону в описании."""
-    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
-        return None, "calendar_unavailable"
-
-    from database import client_repo
-    user_id = callback.from_user.id
-    client = await client_repo.get_by_telegram_id(user_id)
-    phone_display = _format_phone_for_search(client.phone if client else None)
-    if not phone_display:
-        return [], None
-
-    calendar_service = GoogleCalendarService()
-    events = await calendar_service.list_events(period_start, period_end)
-    user_events = [
-        event for event in events
-        if phone_display in (event.get("description") or "")
-    ]
-    return user_events, None
+from telegram_bot.services.calendar_queries import (
+    is_calendar_available,
+    get_user_calendar_events_by_telegram_id,
+    delete_event,
+)
 
 async def start_command(message: Message, state: FSMContext, is_admin: bool = False):
     """Обработчик команды /start"""
@@ -123,7 +89,7 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             parse_mode="HTML"
         )
     elif callback.data in {"active_bookings", "booking_history"}:
-        if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+        if not is_calendar_available():
             await callback.message.edit_text(
                 "📅 <b>Ваши бронирования</b>\n\n"
                 "Google Calendar недоступен. Проверьте настройки и токены.",
@@ -145,7 +111,11 @@ async def main_menu_callback(callback: CallbackQuery, state: FSMContext, is_admi
             empty_text = "📅 <b>История бронирований</b>\n\nИстория пока пуста."
 
         try:
-            user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+            user_events, error_code = await get_user_calendar_events_by_telegram_id(
+                callback.from_user.id,
+                period_start,
+                period_end,
+            )
             if error_code == "calendar_unavailable":
                 await callback.message.edit_text(
                     "📅 <b>Ваши бронирования</b>\n\n"
@@ -234,7 +204,11 @@ async def active_booking_open_callback(callback: CallbackQuery):
     period_end = now + timedelta(days=90)
 
     try:
-        user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+        user_events, error_code = await get_user_calendar_events_by_telegram_id(
+            callback.from_user.id,
+            period_start,
+            period_end,
+        )
         if error_code == "calendar_unavailable":
             await callback.answer("Календарь недоступен", show_alert=True)
             return
@@ -274,12 +248,16 @@ async def active_booking_cancel_callback(callback: CallbackQuery):
     period_start = now
     period_end = now + timedelta(days=90)
 
-    if not CALENDAR_AVAILABLE or not GoogleCalendarService:
+    if not is_calendar_available():
         await callback.answer("Календарь недоступен", show_alert=True)
         return
 
     try:
-        user_events, error_code = await _get_user_calendar_events(callback, period_start, period_end)
+        user_events, error_code = await get_user_calendar_events_by_telegram_id(
+            callback.from_user.id,
+            period_start,
+            period_end,
+        )
         if error_code == "calendar_unavailable":
             await callback.answer("Календарь недоступен", show_alert=True)
             return
@@ -288,11 +266,7 @@ async def active_booking_cancel_callback(callback: CallbackQuery):
             await callback.answer("Бронирование не найдено", show_alert=True)
             return
 
-        calendar_service = GoogleCalendarService()
-        calendar_service._service.events().delete(
-            calendarId=calendar_service.calendar_id,
-            eventId=event_id
-        ).execute()
+        await delete_event(event_id)
     except Exception as e:
         print(f"Ошибка отмены бронирования: {e}")
         await callback.answer("Не удалось отменить бронирование", show_alert=True)
