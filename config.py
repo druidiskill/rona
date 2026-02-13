@@ -5,8 +5,12 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-VK_BOT_TOKEN = os.getenv("VK_BOT_TOKEN")
+VK_BOT_TOKEN = os.getenv("VK_BOT_TOKEN") or os.getenv("VK_GROUP_TOKEN")
 VK_GROUP_ID = os.getenv("VK_GROUP_ID")
+VK_BOT_PREFIX = os.getenv("VK_BOT_PREFIX", "/")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+VK_REDIS_KEY_PREFIX = os.getenv("VK_REDIS_KEY_PREFIX", "rona:vk:state")
+VK_REDIS_STATE_TTL_SECONDS = int(os.getenv("VK_REDIS_STATE_TTL_SECONDS", "86400"))
 
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
 GOOGLE_CREDENTIALS_FILE = os.getenv(

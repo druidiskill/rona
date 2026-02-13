@@ -72,3 +72,24 @@ async def get_user_calendar_events_by_telegram_id(
         if phone_display in (event.get("description") or "")
     ]
     return user_events, None
+
+
+async def get_user_calendar_events_by_vk_id(
+    vk_id: int,
+    period_start: datetime,
+    period_end: datetime,
+) -> tuple[list[dict] | None, str | None]:
+    if not is_calendar_available():
+        return None, "calendar_unavailable"
+
+    client = await client_repo.get_by_vk_id(vk_id)
+    phone_display = format_phone_for_search(client.phone if client else None)
+    if not phone_display:
+        return [], None
+
+    events = await list_events(period_start, period_end)
+    user_events = [
+        event for event in events
+        if phone_display in (event.get("description") or "")
+    ]
+    return user_events, None
