@@ -56,7 +56,7 @@ async def admin_stats(callback: CallbackQuery, is_admin: bool):
         return
     
     # Получаем статистику
-    services = await service_repo.get_all_active()
+    services = await service_repo.get_all()
     # Здесь можно добавить получение статистики бронирований
     
     stats_text = f"""📊 <b>Статистика студии</b>
@@ -555,5 +555,4 @@ def register_admin_handlers(dp: Dispatcher):
     dp.callback_query.register(search_bookings, F.data == "search_bookings")
     dp.callback_query.register(admin_booking_open, F.data.startswith("admin_booking_open_"))
     dp.message.register(process_search_bookings_query, AdminStates.waiting_for_booking_search_query)
-
 

@@ -259,11 +259,16 @@ def get_services_list_keyboard(services: List[Service]) -> InlineKeyboardMarkup:
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_services")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_service_edit_keyboard(service_id: int) -> InlineKeyboardMarkup:
+def get_service_edit_keyboard(service_id: int, is_active: bool = True) -> InlineKeyboardMarkup:
     """Клавиатура редактирования услуги"""
+    status_button = (
+        InlineKeyboardButton(text="🗑️ Деактивировать", callback_data=f"delete_service_{service_id}")
+        if is_active
+        else InlineKeyboardButton(text="✅ Активировать", callback_data=f"activate_service_{service_id}")
+    )
     keyboard = [
         [InlineKeyboardButton(text="🔧 Редактировать", callback_data=f"edit_service_new_{service_id}")],
-        [InlineKeyboardButton(text="🗑️ Деактивировать", callback_data=f"delete_service_{service_id}")],
+        [status_button],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_services")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

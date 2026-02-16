@@ -16,7 +16,7 @@ async def show_services_management(callback: CallbackQuery, is_admin: bool):
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
     
-    services = await service_repo.get_all_active()
+    services = await service_repo.get_all()
     
     services_text = "📸 <b>Управление услугами</b>\n\n"
     for service in services:
@@ -38,7 +38,7 @@ async def show_services_list(callback: CallbackQuery, is_admin: bool):
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
     
-    services = await service_repo.get_all_active()
+    services = await service_repo.get_all()
     
     if not services:
         await callback.message.edit_text(
@@ -95,7 +95,7 @@ async def show_service_edit(callback: CallbackQuery, is_admin: bool):
     
     await callback.message.edit_text(
         service_text,
-        reply_markup=get_service_edit_keyboard(service_id),
+        reply_markup=get_service_edit_keyboard(service_id, service.is_active),
         parse_mode="HTML"
     )
 
@@ -191,6 +191,25 @@ async def delete_service(callback: CallbackQuery, is_admin: bool):
     await callback.answer(f"✅ Услуга '{service.name}' деактивирована", show_alert=True)
     await show_services_management(callback, is_admin)
 
+async def activate_service(callback: CallbackQuery, is_admin: bool):
+    """Активация услуги"""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+    
+    service_id = int(callback.data.split("_")[2])
+    service = await service_repo.get_by_id(service_id)
+    
+    if not service:
+        await callback.answer("Услуга не найдена", show_alert=True)
+        return
+    
+    service.is_active = True
+    await service_repo.update(service)
+    
+    await callback.answer(f"✅ Услуга '{service.name}' активирована", show_alert=True)
+    await show_services_management(callback, is_admin)
+
 async def process_service_name(message: Message, state: FSMContext, is_admin: bool):
     """Обработка нового названия услуги"""
     if not is_admin:
@@ -245,7 +264,7 @@ async def process_service_name(message: Message, state: FSMContext, is_admin: bo
     
     await message.answer(
         service_text,
-        reply_markup=get_service_edit_keyboard(service_id),
+        reply_markup=get_service_edit_keyboard(service_id, service.is_active),
         parse_mode="HTML"
     )
     await state.clear()
@@ -306,7 +325,7 @@ async def process_service_description(message: Message, state: FSMContext, is_ad
     
     await message.answer(
         service_text,
-        reply_markup=get_service_edit_keyboard(service_id),
+        reply_markup=get_service_edit_keyboard(service_id, service.is_active),
         parse_mode="HTML"
     )
     await state.clear()
@@ -383,7 +402,7 @@ async def process_service_price(message: Message, state: FSMContext, is_admin: b
     
     await message.answer(
         service_text,
-        reply_markup=get_service_edit_keyboard(service_id),
+        reply_markup=get_service_edit_keyboard(service_id, service.is_active),
         parse_mode="HTML"
     )
     await state.clear()
@@ -481,7 +500,7 @@ async def process_service_duration(message: Message, state: FSMContext, is_admin
     
     await message.answer(
         service_text,
-        reply_markup=get_service_edit_keyboard(service_id),
+        reply_markup=get_service_edit_keyboard(service_id, service.is_active),
         parse_mode="HTML"
     )
     await state.clear()
@@ -499,6 +518,7 @@ def register_service_management_handlers(dp: Dispatcher):
     dp.callback_query.register(edit_service_price, F.data.regexp(r"^edit_service_price_\d+$"))
     dp.callback_query.register(edit_service_duration, F.data.startswith("edit_service_duration_"))
     dp.callback_query.register(delete_service, F.data.startswith("delete_service_"))
+    dp.callback_query.register(activate_service, F.data.startswith("activate_service_"))
     
     # Обработка текстовых сообщений
     dp.message.register(process_service_name, AdminStates.waiting_for_service_name)
