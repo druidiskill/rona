@@ -6,7 +6,7 @@ from enum import Enum
 from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, Text
 from vkbottle.bot import Bot, Message
 
-from config import ADMIN_IDS_VK
+from config import ADMIN_IDS_VK, TELEGRAM_BOT_TOKEN
 from database import client_repo, service_repo
 from database.models import Client
 from telegram_bot.services.booking_calendar import (
@@ -732,6 +732,52 @@ def register_booking_handlers(bot: Bot):
         if phone10:
             client.phone = phone10
         await client_repo.update(client)
+
+        # Уведомляем администраторов в Telegram о брони из VK
+        try:
+            from aiogram import Bot as TelegramBot
+            from aiogram.enums import ParseMode
+            from database import admin_repo
+
+            if TELEGRAM_BOT_TOKEN:
+                tg_bot = TelegramBot(token=TELEGRAM_BOT_TOKEN)
+                extras = data.get("extras", [])
+                extras_labels = {
+                    "photographer": "Фотограф",
+                    "makeuproom": "Гримерка",
+                    "fireplace": "Розжиг камина",
+                    "rental": "Прокат: халат и полотенце",
+                }
+                extras_display = ", ".join(extras_labels.get(e, e) for e in extras) if extras else "Нет"
+
+                time_range = f"{event_start.strftime('%H:%M')} - {event_end.strftime('%H:%M')}"
+                admin_text = (
+                    "📅 <b>Новая бронь (VK)</b>\n\n"
+                    f"📸 Услуга: {service_name}\n"
+                    f"📅 Дата: {event_start.strftime('%d.%m.%Y')}\n"
+                    f"🕒 Время: {time_range}\n"
+                    f"👤 Клиент: {data['name']}\n"
+                    f"📱 Телефон: {data['phone']}\n"
+                    f"👥 Гостей: {data['guests_count']}\n"
+                    f"➕ Доп. услуги: {extras_display}\n"
+                    f"VK ID: {message.from_id}\n"
+                )
+
+                admins = await admin_repo.get_all()
+                for admin in admins:
+                    if not admin.is_active or not admin.telegram_id:
+                        continue
+                    try:
+                        await tg_bot.send_message(
+                            admin.telegram_id,
+                            admin_text,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    except Exception:
+                        pass
+                await tg_bot.session.close()
+        except Exception:
+            pass
 
         time_range = f"{event_start.strftime('%H:%M')} - {event_end.strftime('%H:%M')}"
         text = (

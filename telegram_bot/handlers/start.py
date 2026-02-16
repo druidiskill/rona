@@ -17,6 +17,7 @@ from telegram_bot.services.calendar_queries import (
     is_calendar_available,
     get_user_calendar_events_by_telegram_id,
     delete_event,
+    list_events,
 )
 
 async def start_command(message: Message, state: FSMContext, is_admin: bool = False):
@@ -265,6 +266,22 @@ async def active_booking_cancel_callback(callback: CallbackQuery):
         if not event:
             await callback.answer("Бронирование не найдено", show_alert=True)
             return
+
+        # Удаляем связанную доп. услугу (Service ID: 9), если найдется
+        try:
+            all_events = await list_events(period_start, period_end)
+            marker = f"Связано с событием: {event_id}"
+            linked_events = [
+                e for e in all_events
+                if marker in (e.get("description") or "")
+                and "Service ID: 9" in (e.get("description") or "")
+            ]
+            for linked in linked_events:
+                linked_id = linked.get("id")
+                if linked_id:
+                    await delete_event(linked_id)
+        except Exception as e:
+            print(f"Ошибка удаления связанной услуги id=9: {e}")
 
         await delete_event(event_id)
     except Exception as e:
