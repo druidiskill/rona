@@ -25,9 +25,13 @@ def _configure_event_loop_policy() -> None:
             pass
 
 
-def _run_async(coro):
+def _build_bot_in_loop():
+    """Build VK bot inside an explicitly managed loop."""
     _configure_event_loop_policy()
-    return asyncio.run(coro)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    bot = loop.run_until_complete(build_bot())
+    return bot, loop
 
 
 def run() -> int:
@@ -35,9 +39,10 @@ def run() -> int:
         print("VK_BOT_TOKEN/VK_GROUP_TOKEN не задан в .env")
         return 1
 
+    loop = None
     try:
         print("Запуск VK бота...")
-        bot = _run_async(build_bot())
+        bot, loop = _build_bot_in_loop()
         run_forever(bot)
         return 0
     except KeyboardInterrupt:
@@ -46,6 +51,14 @@ def run() -> int:
     except Exception as e:
         print(f"Ошибка при запуске VK бота: {e}")
         return 1
+    finally:
+        try:
+            if loop and loop.is_running():
+                loop.stop()
+            if loop and not loop.is_closed():
+                loop.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

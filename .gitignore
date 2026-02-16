@@ -11,3 +11,7 @@
 /venv/
 .env*
 /tests/
+/.tmp_pkgs/
+__pycache__/
+**/__pycache__/
+*.py[cod]
