@@ -58,6 +58,62 @@ def _normalize_max_guests(raw_value: int | None) -> int:
     return max(1, max_guests)
 
 
+def _format_money(value: float | int | None) -> str:
+    amount = float(value or 0)
+    if amount.is_integer():
+        return str(int(amount))
+    return f"{amount:.2f}".rstrip("0").rstrip(".")
+
+
+def _build_service_details_text(service) -> str:
+    base_clients = int(service.base_num_clients or service.max_num_clients or 1)
+    max_clients = _normalize_max_guests(service.max_num_clients or base_clients)
+    min_duration = int(service.min_duration_minutes or 60)
+
+    lines = [
+        f"📸 {service.name}",
+        "",
+        (service.description or "").strip(),
+        "",
+        "💰 Цены:",
+        f"• Будни: {_format_money(service.price_min)}₽",
+        f"• Выходные: {_format_money(service.price_min_weekend)}₽",
+        "",
+        "👥 Количество людей:",
+        f"• Входит в стоимость: до {base_clients} чел.",
+        f"• Максимум: {max_clients} чел.",
+    ]
+    if base_clients != max_clients:
+        lines.append(f"• Дополнительно: {_format_money(service.price_for_extra_client)}₽/чел.")
+
+    lines.extend(
+        [
+            "",
+            "⏰ Длительность:",
+            f"• Минимум: {min_duration} мин.",
+            "• Бронирование только полными часами.",
+            "",
+            "📅 Дополнительные услуги:",
+            "• Фотограф: 11 500₽",
+            "• Гримерка: 200/250₽/час",
+            "• Розжиг камина: 400₽",
+            "• Прокат (белый халат и полотенце): 200₽",
+        ]
+    )
+    return "\n".join(lines).strip()
+
+
+def _get_service_details_keyboard(service_id: int) -> str:
+    kb = Keyboard(one_time=False, inline=False)
+    kb.add(
+        Text("✅ Перейти к бронированию", payload={"a": "bk_service_confirm", "sid": service_id}),
+        color=KeyboardButtonColor.POSITIVE,
+    ).row()
+    kb.add(Text("📸 Услуги"), color=KeyboardButtonColor.PRIMARY).row()
+    kb.add(Text("🏠 Главное меню"), color=KeyboardButtonColor.SECONDARY)
+    return kb.get_json()
+
+
 def _normalize_phone(phone: str) -> str | None:
     digits = "".join(ch for ch in str(phone) if ch.isdigit())
     if len(digits) == 11 and digits.startswith(("7", "8")):
@@ -290,6 +346,20 @@ async def _load_or_create_vk_client(vk_id: int) -> Client:
 def register_booking_handlers(bot: Bot):
     @bot.on.message(payload_contains={"a": "bk_service"})
     async def booking_start(message: Message):
+        payload = message.get_payload_json() or {}
+        service_id = int(payload.get("sid"))
+        service = await service_repo.get_by_id(service_id)
+        if not service:
+            await message.answer("Услуга не найдена.")
+            return
+
+        await message.answer(
+            _build_service_details_text(service),
+            keyboard=_get_service_details_keyboard(service_id),
+        )
+
+    @bot.on.message(payload_contains={"a": "bk_service_confirm"})
+    async def booking_service_confirm(message: Message):
         payload = message.get_payload_json() or {}
         service_id = int(payload.get("sid"))
         service = await service_repo.get_by_id(service_id)
