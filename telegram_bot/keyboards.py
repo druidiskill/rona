@@ -434,7 +434,13 @@ def get_add_service_extras_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_existing_services_keyboard(services: List[Service], selected_ids: List[int] = None) -> InlineKeyboardMarkup:
+def get_existing_services_keyboard(
+    services: List[Service],
+    selected_ids: List[int] = None,
+    select_prefix: str = "select_extra_service_",
+    done_callback: str = "extras_done",
+    back_callback: str = "add_service_main",
+) -> InlineKeyboardMarkup:
     """Клавиатура выбора существующих услуг как дополнительных"""
     if selected_ids is None:
         selected_ids = []
@@ -447,12 +453,25 @@ def get_existing_services_keyboard(services: List[Service], selected_ids: List[i
             keyboard.append([
                 InlineKeyboardButton(
                     text=f"{status} {service.name} - {service.price_min}₽",
-                    callback_data=f"select_extra_service_{service.id}"
+                    callback_data=f"{select_prefix}{service.id}"
                 )
             ])
     
-    keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data="extras_done")])
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад к услуге", callback_data="add_service_main")])
+    keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data=done_callback)])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад к услуге", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_edit_service_price_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура настройки цен для редактирования услуги."""
+    keyboard = [
+        [InlineKeyboardButton(text="💰 Цена (будни)", callback_data="edit_service_price_weekday")],
+        [InlineKeyboardButton(text="💰 Цена (выходные)", callback_data="edit_service_price_weekend")],
+        [InlineKeyboardButton(text="👤 Цена за доп. человека (будни)", callback_data="edit_service_price_extra_weekday")],
+        [InlineKeyboardButton(text="👤 Цена за доп. человека (выходные)", callback_data="edit_service_price_extra_weekend")],
+        [InlineKeyboardButton(text="👥 Цена от 10 человек", callback_data="edit_service_price_group")],
+        [InlineKeyboardButton(text="🔙 Назад к услуге", callback_data="show_edit_service_main")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_edit_service_main_keyboard():

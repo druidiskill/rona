@@ -130,6 +130,44 @@ async def add_service_price_weekend_callback(callback: CallbackQuery, state: FSM
     )
     await state.set_state(AdminStates.waiting_for_new_service_price_weekend)
 
+async def add_service_price_extra_weekday_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Обработчик кнопки цены за дополнительного клиента в будни."""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "👤 <b>Цена за доп. человека (будни)</b>\n\nВведите цену (только число):",
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_for_new_service_price_extra_weekday)
+
+
+async def add_service_price_extra_weekend_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Обработчик кнопки цены за дополнительного клиента в выходные."""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "👤 <b>Цена за доп. человека (выходные)</b>\n\nВведите цену (только число):",
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_for_new_service_price_extra_weekend)
+
+
+async def add_service_price_group_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Обработчик кнопки цены для группы (от 10 человек)."""
+    if not is_admin:
+        await callback.answer("У вас нет прав администратора", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "👥 <b>Цена от 10 человек</b>\n\nВведите цену (только число):",
+        parse_mode="HTML",
+    )
+    await state.set_state(AdminStates.waiting_for_new_service_price_group)
+
 async def add_service_max_clients_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Обработчик кнопки 'Макс. человек'"""
     if not is_admin:
@@ -278,6 +316,66 @@ async def process_new_service_price_weekend(message: Message, state: FSMContext,
         
     except ValueError:
         await message.answer("❌ Неверный формат цены. Введите только число:")
+
+async def process_new_service_price_extra_weekday(message: Message, state: FSMContext, is_admin: bool):
+    """Обработка цены за доп. человека в будни."""
+    if not is_admin:
+        await message.answer("У вас нет прав администратора")
+        return
+
+    try:
+        price = float(message.text.strip())
+        if price < 0:
+            raise ValueError
+        data = await state.get_data()
+        if "new_service_data" not in data:
+            data["new_service_data"] = {}
+        data["new_service_data"]["price_extra_weekday"] = price
+        await state.update_data(data)
+        await show_add_service_main_after_edit(message, state, is_admin)
+    except ValueError:
+        await message.answer("❌ Неверный формат цены. Введите число:")
+
+
+async def process_new_service_price_extra_weekend(message: Message, state: FSMContext, is_admin: bool):
+    """Обработка цены за доп. человека в выходные."""
+    if not is_admin:
+        await message.answer("У вас нет прав администратора")
+        return
+
+    try:
+        price = float(message.text.strip())
+        if price < 0:
+            raise ValueError
+        data = await state.get_data()
+        if "new_service_data" not in data:
+            data["new_service_data"] = {}
+        data["new_service_data"]["price_extra_weekend"] = price
+        await state.update_data(data)
+        await show_add_service_main_after_edit(message, state, is_admin)
+    except ValueError:
+        await message.answer("❌ Неверный формат цены. Введите число:")
+
+
+async def process_new_service_price_group(message: Message, state: FSMContext, is_admin: bool):
+    """Обработка цены от 10 человек."""
+    if not is_admin:
+        await message.answer("У вас нет прав администратора")
+        return
+
+    try:
+        price = float(message.text.strip())
+        if price < 0:
+            raise ValueError
+        data = await state.get_data()
+        if "new_service_data" not in data:
+            data["new_service_data"] = {}
+        data["new_service_data"]["price_group"] = price
+        await state.update_data(data)
+        await show_add_service_main_after_edit(message, state, is_admin)
+    except ValueError:
+        await message.answer("❌ Неверный формат цены. Введите число:")
+
 
 async def process_new_service_max_clients(message: Message, state: FSMContext, is_admin: bool):
     """Обработка максимального количества клиентов"""
@@ -467,7 +565,7 @@ async def create_service_final_callback(callback: CallbackQuery, state: FSMConte
     service_data = data.get("new_service_data", {})
     
     # Проверяем обязательные поля
-    required_fields = ['name', 'description', 'price_weekday', 'price_weekend', 'max_clients', 'min_duration']
+    required_fields = ['name', 'description', 'price_weekday', 'price_weekend', 'max_clients', 'min_duration', 'step_duration']
     missing_fields = [field for field in required_fields if not service_data.get(field)]
     
     if missing_fields:
@@ -477,7 +575,8 @@ async def create_service_final_callback(callback: CallbackQuery, state: FSMConte
             'price_weekday': 'Цена (будни)',
             'price_weekend': 'Цена (выходные)',
             'max_clients': 'Макс. человек',
-            'min_duration': 'Длительность'
+            'min_duration': 'Длительность',
+            'step_duration': 'Шаг длительности'
         }
         missing_list = [missing_names[field] for field in missing_fields]
         
@@ -581,6 +680,9 @@ def register_add_service_new_handlers(dp: Dispatcher):
     # Меню цен
     dp.callback_query.register(add_service_price_weekday_callback, F.data == "add_service_price_weekday")
     dp.callback_query.register(add_service_price_weekend_callback, F.data == "add_service_price_weekend")
+    dp.callback_query.register(add_service_price_extra_weekday_callback, F.data == "add_service_price_extra_weekday")
+    dp.callback_query.register(add_service_price_extra_weekend_callback, F.data == "add_service_price_extra_weekend")
+    dp.callback_query.register(add_service_price_group_callback, F.data == "add_service_price_group")
     
     # Дополнительные услуги
     dp.callback_query.register(select_extra_service_callback, F.data.startswith("select_extra_service_"))
@@ -594,6 +696,9 @@ def register_add_service_new_handlers(dp: Dispatcher):
     dp.message.register(process_new_service_description, AdminStates.waiting_for_new_service_description)
     dp.message.register(process_new_service_price_weekday, AdminStates.waiting_for_new_service_price_weekday)
     dp.message.register(process_new_service_price_weekend, AdminStates.waiting_for_new_service_price_weekend)
+    dp.message.register(process_new_service_price_extra_weekday, AdminStates.waiting_for_new_service_price_extra_weekday)
+    dp.message.register(process_new_service_price_extra_weekend, AdminStates.waiting_for_new_service_price_extra_weekend)
+    dp.message.register(process_new_service_price_group, AdminStates.waiting_for_new_service_price_group)
     dp.message.register(process_new_service_max_clients, AdminStates.waiting_for_new_service_max_clients)
     dp.message.register(process_new_service_duration, AdminStates.waiting_for_new_service_duration)
     dp.message.register(process_new_service_photos, AdminStates.waiting_for_new_service_photos)

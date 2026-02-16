@@ -3,7 +3,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 from telegram_bot.keyboards import (
-    get_edit_service_main_keyboard, get_add_service_price_keyboard, 
+    get_edit_service_main_keyboard, get_edit_service_price_keyboard,
     get_add_service_extras_keyboard, get_services_management_keyboard,
     get_existing_services_keyboard
 )
@@ -150,7 +150,7 @@ async def edit_service_price_menu_callback(callback: CallbackQuery, state: FSMCo
     
     await callback.message.edit_text(
         "💰 <b>Редактирование цен</b>\n\nВыберите тип цены для редактирования:",
-        reply_markup=get_add_service_price_keyboard(),
+        reply_markup=get_edit_service_price_keyboard(),
         parse_mode="HTML"
     )
 
@@ -188,7 +188,13 @@ async def edit_service_extras_callback(callback: CallbackQuery, state: FSMContex
     
     await callback.message.edit_text(
         "🔧 <b>Редактирование дополнительных услуг</b>\n\nВыберите дополнительные услуги:",
-        reply_markup=get_existing_services_keyboard(active_services, selected_services),
+        reply_markup=get_existing_services_keyboard(
+            active_services,
+            selected_services,
+            select_prefix="select_edit_extra_service_",
+            done_callback="edit_extras_done",
+            back_callback="show_edit_service_main",
+        ),
         parse_mode="HTML"
     )
 
@@ -307,7 +313,13 @@ async def select_edit_extra_service_callback(callback: CallbackQuery, state: FSM
     
     await callback.message.edit_text(
         "🔧 <b>Редактирование дополнительных услуг</b>\n\nВыберите дополнительные услуги:",
-        reply_markup=get_existing_services_keyboard(active_services, selected_services),
+        reply_markup=get_existing_services_keyboard(
+            active_services,
+            selected_services,
+            select_prefix="select_edit_extra_service_",
+            done_callback="edit_extras_done",
+            back_callback="show_edit_service_main",
+        ),
         parse_mode="HTML"
     )
 

@@ -137,7 +137,11 @@ async def edit_service_price(callback: CallbackQuery, state: FSMContext, is_admi
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
     
-    service_id = int(callback.data.split("_")[3])
+    try:
+        service_id = int(callback.data.split("_")[3])
+    except (ValueError, IndexError):
+        await callback.answer("Некорректные данные для редактирования цены", show_alert=True)
+        return
     await state.update_data(service_id=service_id, edit_field="price")
     await state.set_state(AdminStates.waiting_for_service_price)
     
@@ -492,7 +496,7 @@ def register_service_management_handlers(dp: Dispatcher):
     # Редактирование полей
     dp.callback_query.register(edit_service_name, F.data.startswith("edit_service_name_"))
     dp.callback_query.register(edit_service_description, F.data.startswith("edit_service_desc_"))
-    dp.callback_query.register(edit_service_price, F.data.startswith("edit_service_price_"))
+    dp.callback_query.register(edit_service_price, F.data.regexp(r"^edit_service_price_\d+$"))
     dp.callback_query.register(edit_service_duration, F.data.startswith("edit_service_duration_"))
     dp.callback_query.register(delete_service, F.data.startswith("delete_service_"))
     
