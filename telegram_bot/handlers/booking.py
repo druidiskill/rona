@@ -36,14 +36,36 @@ except ImportError as e:
     print(f"[WARNING] Google Calendar недоступен: {e}")
     print("[INFO] Установите зависимости: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
 
-def _build_default_time_slots(duration_minutes: int = 120, all_day: bool = False) -> list[dict]:
+def _normalize_min_duration_minutes(raw_value: int | None) -> int:
+    min_duration = int(raw_value or 60)
+    if min_duration < 60:
+        min_duration = 60
+    if min_duration % 60 != 0:
+        min_duration = ((min_duration // 60) + 1) * 60
+    return min_duration
+
+
+def _get_min_duration_from_state(data: dict) -> int:
+    return _normalize_min_duration_minutes(data.get("min_duration_minutes", 60))
+
+
+def _normalize_max_guests(raw_value: int | None) -> int:
+    max_guests = int(raw_value or 1)
+    return max(1, max_guests)
+
+
+def _get_max_guests_from_state(data: dict) -> int:
+    return _normalize_max_guests(data.get("max_num_clients", 1))
+
+
+def _build_default_time_slots(duration_minutes: int = 60, all_day: bool = False) -> list[dict]:
     return svc_build_default_time_slots(duration_minutes=duration_minutes, all_day=all_day)
 
 async def _get_time_slots_for_date(
     target_date: date,
     service_id: int,
     service_name: str | None,
-    duration_minutes: int = 120,
+    duration_minutes: int = 60,
     all_day: bool = False,
 ) -> tuple[list[dict], bool, str | None]:
     return await svc_get_time_slots_for_date(
@@ -94,6 +116,8 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
     if not service:
         await callback.answer("Услуга не найдена", show_alert=True)
         return
+    min_duration = _normalize_min_duration_minutes(service.min_duration_minutes)
+    max_guests = _normalize_max_guests(service.max_num_clients)
     
     # Проверяем, есть ли уже клиент с таким telegram_id
     from database import client_repo
@@ -109,13 +133,15 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
         await state.update_data(
             service_id=service_id,
             service_name=service.name,
+            min_duration_minutes=min_duration,
+            max_num_clients=max_guests,
             booking_data={
                 'date': None,
                 'time': None,
                 'name': existing_client.name,
                 'phone': phone_display,
                 'guests_count': None,
-                'duration': 120,  # По умолчанию 2 часа
+                'duration': min_duration,
                 'is_all_day': False,
                 'extras': [],
                 'email': existing_client.email,
@@ -127,13 +153,15 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
         await state.update_data(
             service_id=service_id,
             service_name=service.name,
+            min_duration_minutes=min_duration,
+            max_num_clients=max_guests,
             booking_data={
                 'date': None,
                 'time': None,
                 'name': None,
                 'phone': None,
                 'guests_count': None,
-                'duration': 120,  # По умолчанию 2 часа
+                'duration': min_duration,
                 'is_all_day': False,
                 'extras': [],
                 'email': None,
@@ -151,7 +179,7 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
     # Получаем service_name из booking_data или из state
     service_name = booking_data.get('service_name') or data.get('service_name', '')
     service_id = data.get('service_id')
-    duration_minutes = booking_data.get('duration', 120)
+    duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
     date_display = _format_booking_date(booking_data.get('date'))
     time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
     guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -256,7 +284,7 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
     try:
         selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         is_all_day = bool(booking_data.get('is_all_day'))
         time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
             selected_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
@@ -275,7 +303,7 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
-        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум {int(_get_min_duration_from_state(data))} мин., сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {selected_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
             f"Доступные времена ({duration_hint}):",
@@ -353,7 +381,7 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
     try:
         prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         is_all_day = bool(booking_data.get('is_all_day'))
         time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
             prev_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
@@ -372,7 +400,7 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
-        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум {int(_get_min_duration_from_state(data))} мин., сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {prev_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
             f"Доступные времена ({duration_hint}):",
@@ -406,7 +434,7 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
     try:
         next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
         service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         is_all_day = bool(booking_data.get('is_all_day'))
         time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
             next_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
@@ -425,7 +453,7 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
             await callback.answer("⚠️ Календарь временно недоступен. Показаны стандартные слоты.")
 
         await state.update_data(time_slots=time_slots)
-        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум 2 часа, сейчас выбрано: {duration_minutes} мин."
+        duration_hint = "режим: весь день до 21:00" if is_all_day else f"минимум {int(_get_min_duration_from_state(data))} мин., сейчас выбрано: {duration_minutes} мин."
         await callback.message.edit_text(
             f"🕒 <b>Выберите время на {next_date_obj.strftime('%d.%m.%Y')}</b>\n\n"
             f"Доступные времена ({duration_hint}):",
@@ -458,7 +486,7 @@ async def confirm_time_selection(callback: CallbackQuery, state: FSMContext):
         selected_slot = time_slots[time_index]
         selected_time = f"{selected_slot['start_time'].strftime('%H:%M')} - {selected_slot['end_time'].strftime('%H:%M')}"
     else:
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         end_fallback = (datetime.strptime("09:00", "%H:%M") + timedelta(minutes=duration_minutes)).strftime("%H:%M")
         selected_time = f"09:00 - {end_fallback}"  # Fallback
     
@@ -556,7 +584,7 @@ async def process_name_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -667,7 +695,7 @@ async def process_phone_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -700,10 +728,13 @@ async def start_guests_count_input(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     service_id = int(parts[2])
     
+    data = await state.get_data()
+    max_guests = _get_max_guests_from_state(data)
     await state.set_state(BookingStates.entering_guests_count)
     await callback.message.edit_text(
         "👥 <b>Введите количество гостей:</b>\n\n"
         "Укажите количество человек, которые будут участвовать в фотосессии.\n"
+        f"Максимум для этой услуги: {max_guests}.\n"
         "Например: 2, 4, 6",
         parse_mode="HTML"
     )
@@ -724,7 +755,7 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         )
         return
     
-    # Проверяем диапазон (от 1 до 20 человек)
+    # Проверяем диапазон по услуге из БД
     if guests_count < 1:
         await message.answer(
             "❌ <b>Количество гостей должно быть больше 0</b>\n\n"
@@ -734,11 +765,19 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         )
         return
     
-    if guests_count > 20:
+    data = await state.get_data()
+    service_id = data.get('service_id')
+    max_guests = _get_max_guests_from_state(data)
+    if service_id:
+        service = await service_repo.get_by_id(service_id)
+        if service:
+            max_guests = _normalize_max_guests(service.max_num_clients)
+            await state.update_data(max_num_clients=max_guests)
+
+    if guests_count > max_guests:
         await message.answer(
             "❌ <b>Слишком много гостей</b>\n\n"
-            "Максимальное количество гостей: 20 человек.\n"
-            "Для больших групп свяжитесь с нами по телефону.",
+            f"Максимальная вместимость этой услуги: {max_guests} чел.",
             parse_mode="HTML"
         )
         return
@@ -762,7 +801,7 @@ async def process_guests_count_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -800,17 +839,18 @@ async def start_duration_input(callback: CallbackQuery, state: FSMContext):
     service = await service_repo.get_by_id(service_id)
     
     if service:
-        min_duration = max(60, service.min_duration_minutes)
-        step_duration = service.duration_step_minutes
+        min_duration = _normalize_min_duration_minutes(service.min_duration_minutes)
+        await state.update_data(min_duration_minutes=min_duration)
         duration_info = f"\n\n📋 <b>Информация:</b>\n• Минимальная продолжительность: {min_duration} мин.\n• Бронирование только полными часами (60 минут)."
     else:
-        duration_info = ""
+        min_duration = _get_min_duration_from_state(await state.get_data())
+        duration_info = f"\n\n📋 <b>Информация:</b>\n• Минимальная продолжительность: {min_duration} мин.\n• Бронирование только полными часами (60 минут)."
     
     await state.set_state(BookingStates.filling_form)
     await callback.message.edit_text(
         f"⏰ <b>Выберите продолжительность фотосессии:</b>\n\n"
         f"Доступны только полные часы.{duration_info}",
-        reply_markup=get_duration_selection_keyboard(service_id),
+        reply_markup=get_duration_selection_keyboard(service_id, min_duration),
         parse_mode="HTML"
     )
 
@@ -834,10 +874,6 @@ async def select_duration_option(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: ID услуги не найден", show_alert=True)
         return
 
-    if duration < 120:
-        await callback.answer("Минимум 2 часа", show_alert=True)
-        return
-
     if duration > 720:
         await callback.answer("Максимум: весь день", show_alert=True)
         return
@@ -847,16 +883,16 @@ async def select_duration_option(callback: CallbackQuery, state: FSMContext):
         return
 
     service = await service_repo.get_by_id(service_id)
+    min_duration = _get_min_duration_from_state(data)
     if service:
-        min_duration = max(120, int(service.min_duration_minutes or 120))
-        if min_duration % 60 != 0:
-            min_duration = ((min_duration // 60) + 1) * 60
-        if duration < min_duration:
-            await callback.answer(
-                f"Минимальная продолжительность: {min_duration // 60} ч.",
-                show_alert=True
-            )
-            return
+        min_duration = _normalize_min_duration_minutes(service.min_duration_minutes)
+        await state.update_data(min_duration_minutes=min_duration)
+    if duration < min_duration:
+        await callback.answer(
+            f"Минимальная продолжительность: {min_duration} мин.",
+            show_alert=True
+        )
+        return
 
     booking_data = data.get('booking_data', {})
     if booking_data.get('date') and booking_data.get('time'):
@@ -870,9 +906,9 @@ async def select_duration_option(callback: CallbackQuery, state: FSMContext):
             if is_all_day:
                 end_all_day = datetime.combine(selected_date, datetime.strptime("21:00", "%H:%M").time())
                 duration_for_check = int((end_all_day - start_dt).total_seconds() // 60)
-                if duration_for_check < 120:
+                if duration_for_check < min_duration:
                     await callback.answer(
-                        "Для режима 'Весь день' выберите время не позже 19:00.",
+                        "Для режима 'Весь день' выберите более раннее время старта.",
                         show_alert=True
                     )
                     return
@@ -925,15 +961,6 @@ async def process_duration_input(message: Message, state: FSMContext):
         )
         return
 
-    if duration < 120:
-        await message.answer(
-            "❌ <b>Слишком короткая продолжительность</b>\n\n"
-            "Минимальная продолжительность: 120 минут (2 часа).\n"
-            "Пожалуйста, введите корректную продолжительность.",
-            parse_mode="HTML"
-        )
-        return
-
     if duration > 720:
         await message.answer(
             "❌ <b>Слишком долгая продолжительность</b>\n\n"
@@ -956,17 +983,17 @@ async def process_duration_input(message: Message, state: FSMContext):
 
     if service_id:
         service = await service_repo.get_by_id(service_id)
+        min_duration = _get_min_duration_from_state(data)
         if service:
-            min_duration = max(120, int(service.min_duration_minutes or 120))
-            if min_duration % 60 != 0:
-                min_duration = ((min_duration // 60) + 1) * 60
-            if duration < min_duration:
-                await message.answer(
-                    f"❌ <b>Минимальная продолжительность: {min_duration} мин.</b>\n\n"
-                    f"Пожалуйста, введите продолжительность не менее {min_duration} минут.",
-                    parse_mode="HTML"
-                )
-                return
+            min_duration = _normalize_min_duration_minutes(service.min_duration_minutes)
+            await state.update_data(min_duration_minutes=min_duration)
+        if duration < min_duration:
+            await message.answer(
+                f"❌ <b>Минимальная продолжительность: {min_duration} мин.</b>\n\n"
+                f"Пожалуйста, введите продолжительность не менее {min_duration} минут.",
+                parse_mode="HTML"
+            )
+            return
 
     booking_data = data.get('booking_data', {})
     if booking_data.get('date') and booking_data.get('time'):
@@ -1007,7 +1034,7 @@ async def process_duration_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -1084,7 +1111,7 @@ async def process_email_input(message: Message, state: FSMContext):
         data = await state.get_data()
         booking_data = data.get('booking_data', {})
         service_name = booking_data.get('service_name') or data.get('service_name', '')
-        duration_minutes = booking_data.get('duration', 120)
+        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
         date_display = _format_booking_date(booking_data.get('date'))
         time_display = _format_booking_time_range(booking_data.get('time'), duration_minutes)
         guests_display = _format_booking_guests(booking_data.get('guests_count'))
@@ -1255,6 +1282,16 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     for field in required_fields:
         if not booking_data.get(field):
             missing_fields.append(field)
+
+    service = await service_repo.get_by_id(service_id)
+    if service and booking_data.get('guests_count'):
+        max_guests = _normalize_max_guests(service.max_num_clients)
+        if int(booking_data['guests_count']) > max_guests:
+            await callback.answer(
+                f"Максимальная вместимость этой услуги: {max_guests} чел.",
+                show_alert=True
+            )
+            return
     
     if missing_fields:
         field_names = {
@@ -1280,7 +1317,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext):
     selected_time_str = booking_data['time'].split(' - ')[0]  # Берем время начала
     selected_time = datetime.strptime(selected_time_str, "%H:%M").time()
     selected_datetime = datetime.combine(selected_date, selected_time)
-    duration_minutes = booking_data.get('duration', 120)
+    duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
     end_datetime = selected_datetime + timedelta(minutes=duration_minutes)
     time_range_display = f"{selected_datetime.strftime('%H:%M')} - {end_datetime.strftime('%H:%M')}"
     

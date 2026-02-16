@@ -413,6 +413,7 @@ async def process_service_duration(message: Message, state: FSMContext, is_admin
         service = Service(
             name=data.get("service_name"),
             description=data.get("service_description"),
+            base_num_clients=4,  # По умолчанию
             max_num_clients=4,  # По умолчанию
             price_min=data.get("service_price_min"),
             price_min_weekend=data.get("service_price_weekend"),

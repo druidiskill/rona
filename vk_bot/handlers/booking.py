@@ -44,6 +44,20 @@ def _parse_admin_ids(value: str) -> set[int]:
 ADMIN_IDS = _parse_admin_ids(ADMIN_IDS_VK)
 
 
+def _normalize_min_duration_minutes(raw_value: int | None) -> int:
+    min_duration = int(raw_value or 60)
+    if min_duration < 60:
+        min_duration = 60
+    if min_duration % 60 != 0:
+        min_duration = ((min_duration // 60) + 1) * 60
+    return min_duration
+
+
+def _normalize_max_guests(raw_value: int | None) -> int:
+    max_guests = int(raw_value or 1)
+    return max(1, max_guests)
+
+
 def _normalize_phone(phone: str) -> str | None:
     digits = "".join(ch for ch in str(phone) if ch.isdigit())
     if len(digits) == 11 and digits.startswith(("7", "8")):
@@ -129,9 +143,10 @@ def _get_date_keyboard(service_id: int, week_offset: int) -> str:
     return kb.get_json()
 
 
-def _get_duration_keyboard(service_id: int) -> str:
+def _get_duration_keyboard(service_id: int, min_duration_minutes: int = 60) -> str:
     kb = Keyboard(one_time=False, inline=False)
-    for hours in range(2, 9):
+    min_duration = _normalize_min_duration_minutes(min_duration_minutes)
+    for hours in range(min_duration // 60, 9):
         kb.add(
             Text(
                 f"{hours} ч",
@@ -149,9 +164,10 @@ def _get_duration_keyboard(service_id: int) -> str:
     return kb.get_json()
 
 
-def _get_guests_keyboard(service_id: int) -> str:
+def _get_guests_keyboard(service_id: int, max_guests: int = 1) -> str:
     kb = Keyboard(one_time=False, inline=False)
-    for i in range(1, 11):
+    max_allowed = _normalize_max_guests(max_guests)
+    for i in range(1, max_allowed + 1):
         kb.add(Text(str(i), payload={"a": "bk_guests_set", "sid": service_id, "g": i}), color=KeyboardButtonColor.PRIMARY)
         if i % 5 == 0:
             kb.row()
@@ -238,7 +254,7 @@ def _get_booking_data(message: Message) -> dict:
 async def _show_form(bot: Bot, message: Message, booking_data: dict):
     service_id = int(booking_data["service_id"])
     service_name = booking_data.get("service_name", "")
-    duration_minutes = int(booking_data.get("duration", 120))
+    duration_minutes = int(booking_data.get("duration") or 60)
 
     req_mark = lambda ok: "🟢" if ok else "🔴"
     date_ok = bool(booking_data.get("date"))
@@ -286,12 +302,13 @@ def register_booking_handlers(bot: Bot):
         booking_data = {
             "service_id": service_id,
             "service_name": service.name,
+            "max_num_clients": _normalize_max_guests(service.max_num_clients),
             "date": None,
             "time": None,
             "name": client.name if client else None,
             "phone": phone_display,
             "guests_count": None,
-            "duration": 120,
+            "duration": _normalize_min_duration_minutes(service.min_duration_minutes),
             "is_all_day": False,
             "extras": [],
             "email": client.email if client else None,
@@ -337,7 +354,7 @@ def register_booking_handlers(bot: Bot):
         service_id = int(data["service_id"])
         service_name = data.get("service_name")
         selected_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
-        duration = int(data.get("duration", 120))
+        duration = int(data.get("duration") or 60)
         is_all_day = bool(data.get("is_all_day"))
         slots, _, _ = await svc_get_time_slots_for_date(
             target_date=selected_date,
@@ -371,7 +388,7 @@ def register_booking_handlers(bot: Bot):
 
         service_name = data.get("service_name")
         selected_date = datetime.strptime(date_value, "%Y-%m-%d").date()
-        duration = int(data.get("duration", 120))
+        duration = int(data.get("duration") or 60)
         is_all_day = bool(data.get("is_all_day"))
         slots, _, _ = await svc_get_time_slots_for_date(
             target_date=selected_date,
@@ -411,13 +428,23 @@ def register_booking_handlers(bot: Bot):
     @bot.on.message(text="⏰ Длительность", state=VkBookingState.filling_form)
     async def booking_duration(message: Message):
         data = _get_booking_data(message)
-        await message.answer("⏰ Выберите продолжительность:", keyboard=_get_duration_keyboard(int(data["service_id"])))
+        service = await service_repo.get_by_id(int(data["service_id"]))
+        min_duration = _normalize_min_duration_minutes(service.min_duration_minutes if service else 60)
+        await message.answer(
+            "⏰ Выберите продолжительность:",
+            keyboard=_get_duration_keyboard(int(data["service_id"]), min_duration),
+        )
 
     @bot.on.message(payload_contains={"a": "bk_duration_set"}, state=VkBookingState.filling_form)
     async def booking_duration_set(message: Message):
         payload = message.get_payload_json() or {}
         data = _get_booking_data(message)
-        duration = int(payload.get("m", 120))
+        service = await service_repo.get_by_id(int(data["service_id"]))
+        min_duration = _normalize_min_duration_minutes(service.min_duration_minutes if service else 60)
+        duration = int(payload.get("m", min_duration))
+        if duration < min_duration:
+            await message.answer(f"Минимальная продолжительность: {min_duration} мин.")
+            return
         data["is_all_day"] = duration == 720
         if data["is_all_day"] and data.get("date") and data.get("time"):
             s = data["time"].split(" - ")[0]
@@ -434,13 +461,24 @@ def register_booking_handlers(bot: Bot):
     @bot.on.message(text="👥 Гости", state=VkBookingState.filling_form)
     async def booking_guests(message: Message):
         data = _get_booking_data(message)
-        await message.answer("👥 Выберите количество гостей:", keyboard=_get_guests_keyboard(int(data["service_id"])))
+        service = await service_repo.get_by_id(int(data["service_id"]))
+        max_guests = _normalize_max_guests(service.max_num_clients if service else data.get("max_num_clients", 1))
+        data["max_num_clients"] = max_guests
+        await _set_state(bot, message, VkBookingState.filling_form, data)
+        await message.answer("👥 Выберите количество гостей:", keyboard=_get_guests_keyboard(int(data["service_id"]), max_guests))
 
     @bot.on.message(payload_contains={"a": "bk_guests_set"}, state=VkBookingState.filling_form)
     async def booking_guests_set(message: Message):
         payload = message.get_payload_json() or {}
         data = _get_booking_data(message)
-        data["guests_count"] = int(payload.get("g"))
+        service = await service_repo.get_by_id(int(data["service_id"]))
+        max_guests = _normalize_max_guests(service.max_num_clients if service else data.get("max_num_clients", 1))
+        data["max_num_clients"] = max_guests
+        guests_count = int(payload.get("g"))
+        if guests_count > max_guests:
+            await message.answer(f"Максимальная вместимость этой услуги: {max_guests} чел.")
+            return
+        data["guests_count"] = guests_count
         await _show_form(bot, message, data)
 
     @bot.on.message(payload_contains={"a": "bk_extras"}, state=VkBookingState.filling_form)
@@ -535,12 +573,16 @@ def register_booking_handlers(bot: Bot):
             return
 
         service_id = int(data["service_id"])
+        service = await service_repo.get_by_id(service_id)
+        if service and int(data.get("guests_count") or 0) > _normalize_max_guests(service.max_num_clients):
+            await message.answer(f"Максимальная вместимость этой услуги: {_normalize_max_guests(service.max_num_clients)} чел.")
+            return
         service_name = data.get("service_name", "")
         selected_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
         start_str = data["time"].split(" - ")[0]
         start_time = datetime.strptime(start_str, "%H:%M").time()
         start_dt = datetime.combine(selected_date, start_time)
-        duration = int(data.get("duration", 120))
+        duration = int(data.get("duration") or 60)
         ok, reason = await svc_is_booking_available(
             target_date=selected_date,
             start_time=start_dt,

@@ -27,12 +27,16 @@ async def show_service_details(callback: CallbackQuery, state: FSMContext):
 """
 
     if service.id != 9:
+        base_clients = int(service.base_num_clients or service.max_num_clients or 1)
+        max_clients = int(service.max_num_clients or base_clients)
         description += f"""
 
 👥 <b>Количество людей:</b>
-• До {service.max_num_clients} чел. - базовая цена
-• Дополнительно: {service.price_for_extra_client}₽/чел.
+• Входит в стоимость: до {base_clients} чел.
+• Максимум: {max_clients} чел.
 """
+        if base_clients != max_clients:
+            description += f"• Дополнительно: {service.price_for_extra_client}₽/чел.\n"
 
     description += f"""
 
@@ -51,7 +55,10 @@ async def show_service_details(callback: CallbackQuery, state: FSMContext):
     
     photo_files = list_service_photos(service_id)
     if photo_files:
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            print(f"Не удалось удалить сообщение перед отправкой фото: {e}")
         await callback.message.answer_photo(
             photo=FSInputFile(photo_files[0]),
             caption=description.strip(),
@@ -146,7 +153,10 @@ async def back_to_service_from_photos(callback: CallbackQuery):
     message_ids_str = service_and_messages[1] if len(service_and_messages) > 1 else ""
     
     # Удаляем текущее сообщение с кнопкой
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        print(f"Не удалось удалить сообщение с кнопкой возврата: {e}")
     
     # Удаляем все сообщения медиа-группы
     if message_ids_str:

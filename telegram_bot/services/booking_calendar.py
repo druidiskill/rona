@@ -12,7 +12,7 @@ except ImportError:
     CALENDAR_AVAILABLE = False
 
 
-def build_default_time_slots(duration_minutes: int = 120, all_day: bool = False) -> list[dict]:
+def build_default_time_slots(duration_minutes: int = 60, all_day: bool = False) -> list[dict]:
     time_slots = []
     hour = 9
     if all_day:
@@ -25,7 +25,7 @@ def build_default_time_slots(duration_minutes: int = 120, all_day: bool = False)
             hour += 1
         return time_slots
 
-    slot_minutes = max(120, int(duration_minutes or 120))
+    slot_minutes = max(60, int(duration_minutes or 60))
     while hour < 21:
         start_dt = datetime.strptime(f"{hour:02d}:00", "%H:%M")
         end_dt = start_dt + timedelta(minutes=slot_minutes)
@@ -42,7 +42,7 @@ async def get_time_slots_for_date(
     target_date: date,
     service_id: int,
     service_name: str | None,
-    duration_minutes: int = 120,
+    duration_minutes: int = 60,
     all_day: bool = False,
 ) -> tuple[list[dict], bool, str | None]:
     if CALENDAR_AVAILABLE and GoogleCalendarService:
@@ -79,9 +79,9 @@ async def get_time_slots_for_date(
             tz = ZoneInfo(calendar_service.time_zone)
             day_start = datetime.combine(target_date, work_start, tzinfo=tz)
             day_end = datetime.combine(target_date, work_end, tzinfo=tz)
-            slot_minutes = max(120, int(duration_minutes or 120))
+            slot_minutes = max(60, int(duration_minutes or 60))
             step_minutes = 60
-            min_slot_minutes = 120
+            min_slot_minutes = 60
 
             def _overlap_count(start: datetime, end: datetime, intervals: list[tuple[datetime, datetime]]) -> int:
                 count = 0

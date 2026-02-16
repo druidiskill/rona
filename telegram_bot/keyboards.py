@@ -160,31 +160,32 @@ def get_time_selection_keyboard(service_id: int, time_slots: list, selected_date
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"booking_back_from_time_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_duration_selection_keyboard(service_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура выбора продолжительности (2-8 часов + весь день)."""
-    keyboard = [
-        [
-            InlineKeyboardButton(text="2 часа", callback_data=f"booking_set_duration_{service_id}_120"),
-            InlineKeyboardButton(text="3 часа", callback_data=f"booking_set_duration_{service_id}_180"),
-        ],
-        [
-            InlineKeyboardButton(text="4 часа", callback_data=f"booking_set_duration_{service_id}_240"),
-            InlineKeyboardButton(text="5 часов", callback_data=f"booking_set_duration_{service_id}_300"),
-        ],
-        [
-            InlineKeyboardButton(text="6 часов", callback_data=f"booking_set_duration_{service_id}_360"),
-            InlineKeyboardButton(text="7 часов", callback_data=f"booking_set_duration_{service_id}_420"),
-        ],
-        [
-            InlineKeyboardButton(text="8 часов", callback_data=f"booking_set_duration_{service_id}_480"),
-        ],
-        [
-            InlineKeyboardButton(text="Весь день", callback_data=f"booking_set_duration_{service_id}_720"),
-        ],
-        [
-            InlineKeyboardButton(text="🔙 Назад", callback_data=f"service_{service_id}"),
-        ],
-    ]
+def get_duration_selection_keyboard(service_id: int, min_duration_minutes: int = 60) -> InlineKeyboardMarkup:
+    """Клавиатура выбора продолжительности (от минимальной длительности услуги до 8 часов + весь день)."""
+    min_duration = int(min_duration_minutes or 60)
+    if min_duration < 60:
+        min_duration = 60
+    if min_duration % 60 != 0:
+        min_duration = ((min_duration // 60) + 1) * 60
+
+    duration_values = [minutes for minutes in range(min_duration, 481, 60)]
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    for i in range(0, len(duration_values), 2):
+        row: list[InlineKeyboardButton] = []
+        for minutes in duration_values[i:i + 2]:
+            hours = minutes // 60
+            hour_label = "час" if hours == 1 else ("часа" if 2 <= hours <= 4 else "часов")
+            row.append(
+                InlineKeyboardButton(
+                    text=f"{hours} {hour_label}",
+                    callback_data=f"booking_set_duration_{service_id}_{minutes}",
+                )
+            )
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton(text="Весь день", callback_data=f"booking_set_duration_{service_id}_720")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"service_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

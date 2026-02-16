@@ -1,30 +1,51 @@
-#!/usr/bin/env python3
-"""
-Запуск Telegram бота для фотостудии
-"""
+﻿#!/usr/bin/env python3
+"""Cross-platform launcher for Telegram bot (Windows/Ubuntu)."""
+
+from __future__ import annotations
 
 import asyncio
-import logging
+import platform
 import sys
-import os
+from pathlib import Path
 
-# Добавляем корневую папку в путь
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from telegram_bot.main import main
-from config import ADMIN_IDS_TG
+from config import TELEGRAM_BOT_TOKEN
+from telegram_bot.main import main as telegram_main
 
-def _parse_admin_ids(value: str):
-    return [int(x.strip()) for x in value.split(",") if x.strip().isdigit()]
 
-admins_ids = _parse_admin_ids(ADMIN_IDS_TG)
+def _configure_event_loop_policy() -> None:
+    # On Windows, SelectorEventLoop is more stable for networking libs.
+    if platform.system().lower().startswith("win"):
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        except Exception:
+            pass
+
+
+def _run_async(coro) -> None:
+    _configure_event_loop_policy()
+    asyncio.run(coro)
+
+
+def run() -> int:
+    if not TELEGRAM_BOT_TOKEN:
+        print("TELEGRAM_BOT_TOKEN не задан в .env")
+        return 1
+
+    try:
+        print("Запуск Telegram бота...")
+        _run_async(telegram_main())
+        return 0
+    except KeyboardInterrupt:
+        print("\nTelegram бот остановлен")
+        return 0
+    except Exception as e:
+        print(f"Ошибка при запуске Telegram бота: {e}")
+        return 1
+
 
 if __name__ == "__main__":
-    try:
-        print("🚀 Запуск Telegram бота...")
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n⏹️ Бот остановлен пользователем")
-    except Exception as e:
-        print(f"❌ Ошибка при запуске бота: {e}")
-        sys.exit(1)
+    raise SystemExit(run())

@@ -492,6 +492,7 @@ async def create_service_final_callback(callback: CallbackQuery, state: FSMConte
         service = Service(
             name=service_data['name'],
             description=service_data['description'],
+            base_num_clients=service_data['max_clients'],
             max_num_clients=service_data['max_clients'],
             plus_service_ids=','.join(map(str, service_data.get('extra_services', []))),
             price_min=service_data['price_weekday'],

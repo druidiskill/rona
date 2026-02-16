@@ -15,6 +15,7 @@ class Service:
     id: Optional[int] = None
     name: str = ""
     description: str = ""
+    base_num_clients: int = 1
     max_num_clients: int = 1
     plus_service_ids: Optional[str] = None  # JSON строка с ID дополнительных услуг
     price_min: float = 0.0
@@ -34,7 +35,7 @@ class Service:
             return self.price_min if not is_weekend else self.price_min_weekend
         
         base_price = self.price_min if not is_weekend else self.price_min_weekend
-        extra_clients = max(0, num_clients - self.max_num_clients)
+        extra_clients = max(0, num_clients - self.base_num_clients)
         extra_price_per_client = self.price_for_extra_client if not is_weekend else self.price_for_extra_client_weekend
         
         return base_price + (extra_clients * extra_price_per_client)

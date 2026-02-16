@@ -1,51 +1,51 @@
-import aiosqlite
+﻿import aiosqlite
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from database.models import Service, Client, Booking, Admin, BookingStatus, BookingWithDetails, TimeSlot
 from database.database import DatabaseManager
 
 class ServiceRepository:
-    """Репозиторий для работы с услугами"""
+    """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ СѓСЃР»СѓРіР°РјРё"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
     
     async def get_all(self) -> List[Service]:
-        """Получение всех услуг"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РІСЃРµС… СѓСЃР»СѓРі"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                SELECT * FROM services ORDER BY name
+                SELECT id, name, description, COALESCE(base_num_clients, max_num_clients) AS base_num_clients, max_num_clients, plus_service_ids, price_min, price_min_weekend, fix_price, price_for_extra_client, price_for_extra_client_weekend, min_duration_minutes, duration_step_minutes, photo_ids, is_active, created_at FROM services ORDER BY name
             """)
             rows = await cursor.fetchall()
             return [self._row_to_service(row) for row in rows]
     
     async def get_all_active(self) -> List[Service]:
-        """Получение всех активных услуг"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РІСЃРµС… Р°РєС‚РёРІРЅС‹С… СѓСЃР»СѓРі"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                SELECT * FROM services WHERE is_active = 1 ORDER BY name
+                SELECT id, name, description, COALESCE(base_num_clients, max_num_clients) AS base_num_clients, max_num_clients, plus_service_ids, price_min, price_min_weekend, fix_price, price_for_extra_client, price_for_extra_client_weekend, min_duration_minutes, duration_step_minutes, photo_ids, is_active, created_at FROM services WHERE is_active = 1 ORDER BY name
             """)
             rows = await cursor.fetchall()
             return [self._row_to_service(row) for row in rows]
     
     async def get_by_id(self, service_id: int) -> Optional[Service]:
-        """Получение услуги по ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ СѓСЃР»СѓРіРё РїРѕ ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM services WHERE id = ?", (service_id,))
+            cursor = await db.execute("SELECT id, name, description, COALESCE(base_num_clients, max_num_clients) AS base_num_clients, max_num_clients, plus_service_ids, price_min, price_min_weekend, fix_price, price_for_extra_client, price_for_extra_client_weekend, min_duration_minutes, duration_step_minutes, photo_ids, is_active, created_at FROM services WHERE id = ?", (service_id,))
             row = await cursor.fetchone()
             return self._row_to_service(row) if row else None
     
     async def create(self, service: Service) -> int:
-        """Создание новой услуги"""
+        """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕР№ СѓСЃР»СѓРіРё"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                INSERT INTO services (name, description, max_num_clients, plus_service_ids, 
+                INSERT INTO services (name, description, base_num_clients, max_num_clients, plus_service_ids, 
                                    price_min, price_min_weekend, fix_price, price_for_extra_client,
                                    price_for_extra_client_weekend, min_duration_minutes, 
                                    duration_step_minutes, photo_ids, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                service.name, service.description, service.max_num_clients,
+                service.name, service.description, int(service.base_num_clients or service.max_num_clients or 1), service.max_num_clients,
                 service.plus_service_ids, service.price_min, service.price_min_weekend,
                 service.fix_price, service.price_for_extra_client,
                 service.price_for_extra_client_weekend, service.min_duration_minutes,
@@ -55,16 +55,16 @@ class ServiceRepository:
             return cursor.lastrowid
     
     async def update(self, service: Service) -> bool:
-        """Обновление услуги"""
+        """РћР±РЅРѕРІР»РµРЅРёРµ СѓСЃР»СѓРіРё"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                UPDATE services SET name=?, description=?, max_num_clients=?, plus_service_ids=?,
+                UPDATE services SET name=?, description=?, base_num_clients=?, max_num_clients=?, plus_service_ids=?,
                                   price_min=?, price_min_weekend=?, fix_price=?, price_for_extra_client=?,
                                   price_for_extra_client_weekend=?, min_duration_minutes=?,
                                   duration_step_minutes=?, photo_ids=?, is_active=?
                 WHERE id=?
             """, (
-                service.name, service.description, service.max_num_clients,
+                service.name, service.description, int(service.base_num_clients or service.max_num_clients or 1), service.max_num_clients,
                 service.plus_service_ids, service.price_min, service.price_min_weekend,
                 service.fix_price, service.price_for_extra_client,
                 service.price_for_extra_client_weekend, service.min_duration_minutes,
@@ -75,52 +75,47 @@ class ServiceRepository:
             return cursor.rowcount > 0
     
     def _row_to_service(self, row) -> Service:
-        """Преобразование строки БД в модель Service"""
+        """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Service"""
         return Service(
-            id=row[0], name=row[1], description=row[2], max_num_clients=row[3],
-            plus_service_ids=row[4], price_min=row[5], price_min_weekend=row[6],
-            fix_price=bool(row[7]), price_for_extra_client=row[8],
-            price_for_extra_client_weekend=row[9], min_duration_minutes=row[10],
-            duration_step_minutes=row[11], photo_ids=row[12], is_active=bool(row[13]),
-            created_at=datetime.fromisoformat(row[14]) if row[14] else None
+            id=row[0], name=row[1], description=row[2], base_num_clients=row[3], max_num_clients=row[4], plus_service_ids=row[5], price_min=row[6], price_min_weekend=row[7], fix_price=bool(row[8]), price_for_extra_client=row[9], price_for_extra_client_weekend=row[10], min_duration_minutes=row[11], duration_step_minutes=row[12], photo_ids=row[13], is_active=bool(row[14]), created_at=datetime.fromisoformat(row[15]) if row[15] else None
         )
 
 class ClientRepository:
-    """Репозиторий для работы с клиентами"""
+    """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ РєР»РёРµРЅС‚Р°РјРё"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
     
     async def get_by_telegram_id(self, telegram_id: int) -> Optional[Client]:
-        """Получение клиента по Telegram ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ Telegram ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM clients WHERE telegram_id = ?", (telegram_id,))
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_vk_id(self, vk_id: int) -> Optional[Client]:
-        """Получение клиента по VK ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ VK ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM clients WHERE vk_id = ?", (vk_id,))
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_phone(self, phone: str) -> Optional[Client]:
-        """Получение клиента по номеру телефона"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ РЅРѕРјРµСЂСѓ С‚РµР»РµС„РѕРЅР°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM clients WHERE phone = ?", (phone,))
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_id(self, client_id: int) -> Optional[Client]:
-        """Получение клиента по ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM clients WHERE id = ?", (client_id,))
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def create(self, client: Client) -> int:
-        """Создание нового клиента"""
+        """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 INSERT INTO clients (telegram_id, vk_id, name, phone, email, sale)
@@ -130,7 +125,7 @@ class ClientRepository:
             return cursor.lastrowid
     
     async def update(self, client: Client) -> bool:
-        """Обновление клиента"""
+        """РћР±РЅРѕРІР»РµРЅРёРµ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 UPDATE clients SET telegram_id=?, vk_id=?, name=?, phone=?, email=?, sale=?
@@ -140,14 +135,14 @@ class ClientRepository:
             return cursor.rowcount > 0
     
     async def get_all(self) -> List[Client]:
-        """Получение всех клиентов"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РІСЃРµС… РєР»РёРµРЅС‚РѕРІ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM clients ORDER BY created_at DESC")
             rows = await cursor.fetchall()
             return [self._row_to_client(row) for row in rows]
     
     def _row_to_client(self, row) -> Client:
-        """Преобразование строки БД в модель Client"""
+        """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Client"""
         return Client(
             id=row[0], telegram_id=row[1], vk_id=row[2], name=row[3],
             phone=row[4], email=row[5], sale=row[6],
@@ -155,13 +150,13 @@ class ClientRepository:
         )
 
 class BookingRepository:
-    """Репозиторий для работы с бронированиями"""
+    """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ Р±СЂРѕРЅРёСЂРѕРІР°РЅРёСЏРјРё"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
     
     async def create(self, booking: Booking) -> int:
-        """Создание нового бронирования"""
+        """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ Р±СЂРѕРЅРёСЂРѕРІР°РЅРёСЏ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 INSERT INTO bookings (client_id, service_id, start_time, num_durations, num_clients,
@@ -176,7 +171,7 @@ class BookingRepository:
             return cursor.lastrowid
     
     async def get_by_client_id(self, client_id: int) -> List[Booking]:
-        """Получение бронирований клиента"""
+        """РџРѕР»СѓС‡РµРЅРёРµ Р±СЂРѕРЅРёСЂРѕРІР°РЅРёР№ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 SELECT * FROM bookings WHERE client_id = ? ORDER BY start_time DESC
@@ -185,7 +180,7 @@ class BookingRepository:
             return [self._row_to_booking(row) for row in rows]
     
     async def get_by_date_range(self, start_date: datetime, end_date: datetime) -> List[Booking]:
-        """Получение бронирований за период"""
+        """РџРѕР»СѓС‡РµРЅРёРµ Р±СЂРѕРЅРёСЂРѕРІР°РЅРёР№ Р·Р° РїРµСЂРёРѕРґ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 SELECT * FROM bookings 
@@ -196,7 +191,7 @@ class BookingRepository:
             return [self._row_to_booking(row) for row in rows]
     
     async def get_conflicting_bookings(self, start_time: datetime, end_time: datetime, exclude_id: Optional[int] = None) -> List[Booking]:
-        """Получение конфликтующих бронирований"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РєРѕРЅС„Р»РёРєС‚СѓСЋС‰РёС… Р±СЂРѕРЅРёСЂРѕРІР°РЅРёР№"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             query = """
                 SELECT * FROM bookings 
@@ -214,14 +209,14 @@ class BookingRepository:
             return [self._row_to_booking(row) for row in rows]
     
     async def update_status(self, booking_id: int, status: BookingStatus) -> bool:
-        """Обновление статуса бронирования"""
+        """РћР±РЅРѕРІР»РµРЅРёРµ СЃС‚Р°С‚СѓСЃР° Р±СЂРѕРЅРёСЂРѕРІР°РЅРёСЏ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("UPDATE bookings SET status = ? WHERE id = ?", (status.value, booking_id))
             await db.commit()
             return cursor.rowcount > 0
     
     def _row_to_booking(self, row) -> Booking:
-        """Преобразование строки БД в модель Booking"""
+        """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Booking"""
         return Booking(
             id=row[0], client_id=row[1], service_id=row[2],
             start_time=datetime.fromisoformat(row[3]), num_durations=row[4],
@@ -231,27 +226,27 @@ class BookingRepository:
         )
 
 class AdminRepository:
-    """Репозиторий для работы с администраторами"""
+    """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°РјРё"""
     
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
     
     async def get_by_telegram_id(self, telegram_id: int) -> Optional[Admin]:
-        """Получение админа по Telegram ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ Р°РґРјРёРЅР° РїРѕ Telegram ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM admins WHERE telegram_id = ? AND is_active = 1", (telegram_id,))
             row = await cursor.fetchone()
             return self._row_to_admin(row) if row else None
     
     async def get_by_vk_id(self, vk_id: int) -> Optional[Admin]:
-        """Получение админа по VK ID"""
+        """РџРѕР»СѓС‡РµРЅРёРµ Р°РґРјРёРЅР° РїРѕ VK ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM admins WHERE vk_id = ? AND is_active = 1", (vk_id,))
             row = await cursor.fetchone()
             return self._row_to_admin(row) if row else None
     
     async def create(self, admin: Admin) -> int:
-        """Создание нового администратора"""
+        """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 INSERT INTO admins (telegram_id, vk_id, is_active)
@@ -261,14 +256,14 @@ class AdminRepository:
             return cursor.lastrowid
     
     async def get_all(self) -> List[Admin]:
-        """Получение всех администраторов"""
+        """РџРѕР»СѓС‡РµРЅРёРµ РІСЃРµС… Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРІ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("SELECT * FROM admins ORDER BY created_at")
             rows = await cursor.fetchall()
             return [self._row_to_admin(row) for row in rows]
     
     async def update(self, admin: Admin) -> bool:
-        """Обновление администратора"""
+        """РћР±РЅРѕРІР»РµРЅРёРµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
                 UPDATE admins SET telegram_id=?, vk_id=?, is_active=?
@@ -278,14 +273,14 @@ class AdminRepository:
             return cursor.rowcount > 0
     
     async def delete(self, admin_id: int) -> bool:
-        """Удаление администратора"""
+        """РЈРґР°Р»РµРЅРёРµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("DELETE FROM admins WHERE id = ?", (admin_id,))
             await db.commit()
             return cursor.rowcount > 0
     
     def _row_to_admin(self, row) -> Admin:
-        """Преобразование строки БД в модель Admin"""
+        """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Admin"""
         return Admin(
             id=row[0], telegram_id=row[1], vk_id=row[2],
             is_active=bool(row[3]), created_at=datetime.fromisoformat(row[4]) if row[4] else None

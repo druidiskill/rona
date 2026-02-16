@@ -1,8 +1,6 @@
-import aiosqlite
-import os
-from typing import Optional, List, Dict, Any
-from datetime import datetime
+﻿import aiosqlite
 from config import DATABASE_URL
+
 
 def _resolve_db_path(database_url: str) -> str:
     if database_url.startswith("sqlite:///"):
@@ -15,23 +13,24 @@ def _resolve_db_path(database_url: str) -> str:
 class DatabaseManager:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or _resolve_db_path(DATABASE_URL or "photostudio.db")
-    
+
     async def init_database(self):
-        """Инициализация базы данных с созданием таблиц"""
+        """Initialize database and create tables."""
         async with aiosqlite.connect(self.db_path) as db:
             await self._create_tables(db)
             await self._insert_initial_data(db)
-    
+
     async def _create_tables(self, db: aiosqlite.Connection):
-        """Создание всех таблиц в базе данных"""
-        # Включаем поддержку FOREIGN KEY
+        """Create all database tables."""
         await db.execute("PRAGMA foreign_keys = ON")
-        # Таблица услуг
-        await db.execute("""
+
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS services (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name VARCHAR(100) NOT NULL,
                 description TEXT,
+                base_num_clients INTEGER NOT NULL DEFAULT 1,
                 max_num_clients INTEGER NOT NULL,
                 plus_service_ids INTEGER,
                 price_min REAL NOT NULL,
@@ -45,10 +44,11 @@ class DatabaseManager:
                 is_active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
-        # Таблица клиентов
-        await db.execute("""
+            """
+        )
+
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS clients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
@@ -59,10 +59,11 @@ class DatabaseManager:
                 sale INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
-        # Таблица бронирований
-        await db.execute("""
+            """
+        )
+
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_id INTEGER NOT NULL,
@@ -79,10 +80,11 @@ class DatabaseManager:
                 FOREIGN KEY (client_id) REFERENCES clients (id),
                 FOREIGN KEY (service_id) REFERENCES services (id)
             )
-        """)
-        
-        # Таблица администраторов
-        await db.execute("""
+            """
+        )
+
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS admins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
@@ -90,10 +92,11 @@ class DatabaseManager:
                 is_active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+            """
+        )
 
-        # Таблица сообщений поддержки
-        await db.execute("""
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS support_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -103,36 +106,109 @@ class DatabaseManager:
                 text TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        
+            """
+        )
+
+        # Backward-compatible migration for existing DBs
+        cursor = await db.execute("PRAGMA table_info(services)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "base_num_clients" not in columns:
+            await db.execute("ALTER TABLE services ADD COLUMN base_num_clients INTEGER NOT NULL DEFAULT 1")
+            await db.execute(
+                "UPDATE services SET base_num_clients = max_num_clients "
+                "WHERE base_num_clients IS NULL OR base_num_clients < 1"
+            )
+
         await db.commit()
-    
+
     async def _insert_initial_data(self, db: aiosqlite.Connection):
-        """Добавление начальных данных"""
-        # Проверяем, есть ли уже услуги
+        """Insert initial data into empty DB."""
         cursor = await db.execute("SELECT COUNT(*) FROM services")
         count = await cursor.fetchone()
-        
+
         if count[0] == 0:
             services = [
-                # name, description, max_num_clients, plus_service_ids, price_min, price_min_weekend, 
-                # fix_price, price_for_extra_client, price_for_extra_client_weekend, min_duration_minutes, duration_step_minutes, photo_ids
-                ("Индивидуальная фотосессия", "Профессиональная фотосессия с ретушью", 1, None, 5000.0, 6000.0, 1, 0.0, 0.0, 60, 60, None),
-                ("Семейная фотосессия", "Фотосессия для всей семьи", 4, None, 8000.0, 10000.0, 0, 2000.0, 2500.0, 90, 30, None),
-                ("Love Story", "Романтическая фотосессия для пары", 2, None, 6000.0, 7500.0, 1, 0.0, 0.0, 75, 15, None),
-                ("Детская фотосессия", "Фотосессия для детей", 1, None, 4000.0, 5000.0, 1, 0.0, 0.0, 45, 15, None)
+                # name, description, base_num_clients, max_num_clients, plus_service_ids, price_min,
+                # price_min_weekend, fix_price, price_for_extra_client, price_for_extra_client_weekend,
+                # min_duration_minutes, duration_step_minutes, photo_ids
+                (
+                    "Индивидуальная фотосессия",
+                    "Профессиональная фотосессия с ретушью",
+                    1,
+                    1,
+                    None,
+                    5000.0,
+                    6000.0,
+                    1,
+                    0.0,
+                    0.0,
+                    60,
+                    60,
+                    None,
+                ),
+                (
+                    "Семейная фотосессия",
+                    "Фотосессия для всей семьи",
+                    4,
+                    4,
+                    None,
+                    8000.0,
+                    10000.0,
+                    0,
+                    2000.0,
+                    2500.0,
+                    90,
+                    30,
+                    None,
+                ),
+                (
+                    "Love Story",
+                    "Романтическая фотосессия для пары",
+                    2,
+                    2,
+                    None,
+                    6000.0,
+                    7500.0,
+                    1,
+                    0.0,
+                    0.0,
+                    75,
+                    15,
+                    None,
+                ),
+                (
+                    "Детская фотосессия",
+                    "Фотосессия для детей",
+                    1,
+                    1,
+                    None,
+                    4000.0,
+                    5000.0,
+                    1,
+                    0.0,
+                    0.0,
+                    45,
+                    15,
+                    None,
+                ),
             ]
-            
-            await db.executemany(
-                """INSERT INTO services (name, description, max_num_clients, plus_service_ids, 
-                   price_min, price_min_weekend, fix_price, price_for_extra_client, 
-                   price_for_extra_client_weekend, min_duration_minutes, duration_step_minutes, photo_ids) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                services
-            )
-            
-            await db.commit()
-            print("Начальные данные добавлены в базу данных")
 
-# Глобальный экземпляр менеджера базы данных
+            await db.executemany(
+                """
+                INSERT INTO services (
+                    name, description, base_num_clients, max_num_clients, plus_service_ids,
+                    price_min, price_min_weekend, fix_price, price_for_extra_client,
+                    price_for_extra_client_weekend, min_duration_minutes,
+                    duration_step_minutes, photo_ids
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                services,
+            )
+
+            await db.commit()
+            print("Initial services inserted")
+
+
+# Global DB manager
 db_manager = DatabaseManager()
