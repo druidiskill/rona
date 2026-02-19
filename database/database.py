@@ -109,6 +109,19 @@ class DatabaseManager:
             """
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faq_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Backward-compatible migration for existing DBs
         cursor = await db.execute("PRAGMA table_info(services)")
         columns = [row[1] for row in await cursor.fetchall()]

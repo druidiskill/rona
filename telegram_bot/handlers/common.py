@@ -10,10 +10,141 @@ from telegram_bot.keyboards import (
     get_clients_management_keyboard, get_admins_management_keyboard
 )
 from telegram_bot.states import SupportStates
-from database import admin_repo, support_repo
+from database import admin_repo, support_repo, faq_repo
+
+FAQ_PAGE_SIZE = 6
+
+def _build_faq_keyboard(items: list[tuple[int, str]], page: int, total_pages: int) -> InlineKeyboardMarkup:
+    keyboard: list[list[InlineKeyboardButton]] = []
+
+    for faq_id, question in items:
+        short_question = question if len(question) <= 50 else f"{question[:47]}..."
+        keyboard.append([
+            InlineKeyboardButton(text=f"❓ {short_question}", callback_data=f"faq_open_{faq_id}_{page}")
+        ])
+
+    nav_row: list[InlineKeyboardButton] = []
+    if total_pages > 1 and page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"faq_page_{page - 1}"))
+    if total_pages > 1 and page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"faq_page_{page + 1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+
+    keyboard.append([InlineKeyboardButton(text="💬 Связаться с администратором", callback_data="faq_contact")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_main")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+async def _get_faq_page_data(page: int) -> tuple[list[tuple[int, str]], int, int]:
+    faqs = await faq_repo.get_all_active()
+    total = len(faqs)
+    total_pages = max(1, (total + FAQ_PAGE_SIZE - 1) // FAQ_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * FAQ_PAGE_SIZE
+    end = min(start + FAQ_PAGE_SIZE, total)
+    items = [(entry.id, entry.question) for entry in faqs[start:end]]
+    return items, total_pages, page
+
+
+async def send_faq_list_message(message: Message, page: int = 0):
+    items, total_pages, page = await _get_faq_page_data(page)
+
+    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
+    if not items:
+        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
+    else:
+        text += "Выберите вопрос кнопкой ниже:"
+
+    await message.answer(
+        text,
+        reply_markup=_build_faq_keyboard(items, page, total_pages),
+        parse_mode="HTML",
+    )
+
 
 async def help_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработчик кнопки помощи"""
+    """Обработчик кнопки помощи: показывает FAQ из БД."""
+    await state.clear()
+    items, total_pages, page = await _get_faq_page_data(0)
+    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
+    if not items:
+        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
+    else:
+        text += "Выберите вопрос кнопкой ниже:"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=_build_faq_keyboard(items, page, total_pages),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def faq_page_callback(callback: CallbackQuery):
+    """Переключение страницы FAQ."""
+    try:
+        page = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка страницы FAQ", show_alert=True)
+        return
+
+    items, total_pages, page = await _get_faq_page_data(page)
+    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
+    if not items:
+        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
+    else:
+        text += "Выберите вопрос кнопкой ниже:"
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=_build_faq_keyboard(items, page, total_pages),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def faq_open_callback(callback: CallbackQuery):
+    """Открывает вопрос FAQ и сохраняет ту же клавиатуру."""
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        await callback.answer("Ошибка данных FAQ", show_alert=True)
+        return
+
+    try:
+        faq_id = int(parts[2])
+        page = int(parts[3])
+    except ValueError:
+        await callback.answer("Ошибка данных FAQ", show_alert=True)
+        return
+
+    entry = await faq_repo.get_by_id(faq_id)
+    items, total_pages, page = await _get_faq_page_data(page)
+    keyboard = _build_faq_keyboard(items, page, total_pages)
+
+    if not entry or not entry.is_active:
+        await callback.message.edit_text(
+            "❌ Вопрос не найден.",
+            reply_markup=keyboard,
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    text = (
+        f"❓ <b>{html.escape(entry.question)}</b>\n\n"
+        f"💡 {html.escape(entry.answer)}"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def faq_contact_callback(callback: CallbackQuery, state: FSMContext):
+    """Переход из FAQ в существующий внутренний чат."""
     await state.set_state(SupportStates.user_chat)
     await callback.message.edit_text(
         "🆘 <b>Поддержка</b>\n\n"
@@ -33,6 +164,7 @@ async def help_callback(callback: CallbackQuery, state: FSMContext):
         )
     except Exception:
         pass
+    await callback.answer()
 
 
 async def support_user_message(message: Message, state: FSMContext):
@@ -439,6 +571,9 @@ async def unknown_callback(callback: CallbackQuery):
 def register_common_handlers(dp: Dispatcher):
     """Регистрация общих обработчиков"""
     dp.callback_query.register(help_callback, F.data == "help")
+    dp.callback_query.register(faq_page_callback, F.data.startswith("faq_page_"))
+    dp.callback_query.register(faq_open_callback, F.data.startswith("faq_open_"))
+    dp.callback_query.register(faq_contact_callback, F.data == "faq_contact")
     dp.callback_query.register(contacts_callback, F.data == "contacts")
     dp.callback_query.register(my_bookings_callback, F.data == "my_bookings")
     dp.callback_query.register(admin_clients_callback, F.data == "admin_clients")
