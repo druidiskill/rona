@@ -82,6 +82,11 @@ class ServiceRepository:
 
 class ClientRepository:
     """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ РєР»РёРµРЅС‚Р°РјРё"""
+
+    CLIENT_SELECT = """
+        SELECT id, telegram_id, vk_id, name, last_name, phone, email, sale, created_at
+        FROM clients
+    """
     
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -89,28 +94,40 @@ class ClientRepository:
     async def get_by_telegram_id(self, telegram_id: int) -> Optional[Client]:
         """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ Telegram ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM clients WHERE telegram_id = ?", (telegram_id,))
+            cursor = await db.execute(
+                f"{self.CLIENT_SELECT} WHERE telegram_id = ?",
+                (telegram_id,),
+            )
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_vk_id(self, vk_id: int) -> Optional[Client]:
         """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ VK ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM clients WHERE vk_id = ?", (vk_id,))
+            cursor = await db.execute(
+                f"{self.CLIENT_SELECT} WHERE vk_id = ?",
+                (vk_id,),
+            )
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_phone(self, phone: str) -> Optional[Client]:
         """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ РЅРѕРјРµСЂСѓ С‚РµР»РµС„РѕРЅР°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM clients WHERE phone = ?", (phone,))
+            cursor = await db.execute(
+                f"{self.CLIENT_SELECT} WHERE phone = ?",
+                (phone,),
+            )
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
     async def get_by_id(self, client_id: int) -> Optional[Client]:
         """РџРѕР»СѓС‡РµРЅРёРµ РєР»РёРµРЅС‚Р° РїРѕ ID"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM clients WHERE id = ?", (client_id,))
+            cursor = await db.execute(
+                f"{self.CLIENT_SELECT} WHERE id = ?",
+                (client_id,),
+            )
             row = await cursor.fetchone()
             return self._row_to_client(row) if row else None
     
@@ -118,9 +135,9 @@ class ClientRepository:
         """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                INSERT INTO clients (telegram_id, vk_id, name, phone, email, sale)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (client.telegram_id, client.vk_id, client.name, client.phone, client.email, client.sale))
+                INSERT INTO clients (telegram_id, vk_id, name, last_name, phone, email, sale)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.sale))
             await db.commit()
             return cursor.lastrowid
     
@@ -128,16 +145,16 @@ class ClientRepository:
         """РћР±РЅРѕРІР»РµРЅРёРµ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                UPDATE clients SET telegram_id=?, vk_id=?, name=?, phone=?, email=?, sale=?
+                UPDATE clients SET telegram_id=?, vk_id=?, name=?, last_name=?, phone=?, email=?, sale=?
                 WHERE id=?
-            """, (client.telegram_id, client.vk_id, client.name, client.phone, client.email, client.sale, client.id))
+            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.sale, client.id))
             await db.commit()
             return cursor.rowcount > 0
     
     async def get_all(self) -> List[Client]:
         """РџРѕР»СѓС‡РµРЅРёРµ РІСЃРµС… РєР»РёРµРЅС‚РѕРІ"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
-            cursor = await db.execute("SELECT * FROM clients ORDER BY created_at DESC")
+            cursor = await db.execute(f"{self.CLIENT_SELECT} ORDER BY created_at DESC")
             rows = await cursor.fetchall()
             return [self._row_to_client(row) for row in rows]
     
@@ -145,8 +162,8 @@ class ClientRepository:
         """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Client"""
         return Client(
             id=row[0], telegram_id=row[1], vk_id=row[2], name=row[3],
-            phone=row[4], email=row[5], sale=row[6],
-            created_at=datetime.fromisoformat(row[7]) if row[7] else None
+            last_name=row[4], phone=row[5], email=row[6], sale=row[7],
+            created_at=datetime.fromisoformat(row[8]) if row[8] else None
         )
 
 class BookingRepository:
@@ -285,3 +302,44 @@ class AdminRepository:
             id=row[0], telegram_id=row[1], vk_id=row[2],
             is_active=bool(row[3]), created_at=datetime.fromisoformat(row[4]) if row[4] else None
         )
+
+
+class BookingReminderLogRepository:
+    """Репозиторий журнала отправленных напоминаний."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db_manager = db_manager
+
+    async def was_sent(self, channel: str, event_id: str, reminder_date: str) -> bool:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                SELECT 1
+                FROM booking_reminder_log
+                WHERE channel = ? AND event_id = ? AND reminder_date = ?
+                LIMIT 1
+                """,
+                (channel, event_id, reminder_date),
+            )
+            return await cursor.fetchone() is not None
+
+    async def mark_sent(
+        self,
+        channel: str,
+        event_id: str,
+        client_id: int,
+        booking_date: str,
+        reminder_date: str,
+    ) -> bool:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT OR IGNORE INTO booking_reminder_log (
+                    channel, event_id, client_id, booking_date, reminder_date
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (channel, event_id, client_id, booking_date, reminder_date),
+            )
+            await db.commit()
+            return cursor.rowcount > 0

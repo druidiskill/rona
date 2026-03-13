@@ -28,3 +28,4 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 ADMIN_IDS_TG = os.getenv("ADMIN_IDS_TG", "")
 ADMIN_IDS_VK = os.getenv("ADMIN_IDS_VK", "")
 
+REMINDER_HOUR_MSK = os.getenv("REMINDER_HOUR_MSK")

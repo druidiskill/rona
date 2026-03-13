@@ -4,6 +4,7 @@ from vkbottle import Bot
 
 from config import REDIS_URL, VK_BOT_TOKEN, VK_REDIS_KEY_PREFIX, VK_REDIS_STATE_TTL_SECONDS
 from database import db_manager
+from telegram_bot.services.booking_reminders import run_booking_reminder_loop, send_vk_booking_reminders
 from vk_bot.handlers import register_handlers
 from vk_bot.state_dispenser import RedisStateDispenser
 
@@ -37,6 +38,14 @@ async def build_bot() -> Bot:
 
     bot = Bot(token=VK_BOT_TOKEN, state_dispenser=state_dispenser)
     register_handlers(bot)
+
+    async def _vk_reminder_task():
+        await run_booking_reminder_loop(
+            sender_name="vk",
+            send_callback=lambda: send_vk_booking_reminders(bot),
+        )
+
+    bot.loop_wrapper.add_task(_vk_reminder_task)
     return bot
 
 

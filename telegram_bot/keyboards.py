@@ -52,6 +52,7 @@ def get_booking_form_keyboard(service_id: int, booking_data: dict = None) -> Inl
     date_status = "✅" if booking_data.get('date') else "‼️"
     time_status = "✅" if booking_data.get('time') else "‼️"
     name_status = "✅" if booking_data.get('name') else "‼️"
+    last_name_status = "✅" if booking_data.get('last_name') else "‼️"
     phone_status = "✅" if booking_data.get('phone') else "‼️"
     guests_status = "✅" if booking_data.get('guests_count') else "‼️"
     
@@ -59,6 +60,7 @@ def get_booking_form_keyboard(service_id: int, booking_data: dict = None) -> Inl
         [InlineKeyboardButton(text=f"{date_status} Дата", callback_data=f"booking_date_{service_id}")],
         [InlineKeyboardButton(text=f"{time_status} Время", callback_data=f"booking_time_{service_id}")],
         [InlineKeyboardButton(text=f"{name_status} Имя", callback_data=f"booking_name_{service_id}")],
+        [InlineKeyboardButton(text=f"{last_name_status} Фамилия", callback_data=f"booking_last_name_{service_id}")],
         [InlineKeyboardButton(text=f"{phone_status} Номер телефона", callback_data=f"booking_phone_{service_id}")],
         [InlineKeyboardButton(text=f"{guests_status} Кол-во гостей", callback_data=f"booking_guests_{service_id}")],
         [InlineKeyboardButton(text="⏰ Продолжительность", callback_data=f"booking_duration_{service_id}")],
@@ -204,6 +206,7 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📸 Управление услугами", callback_data="admin_services")],
         [InlineKeyboardButton(text="👥 Клиенты", callback_data="admin_clients")],
         [InlineKeyboardButton(text="👨‍💼 Администраторы", callback_data="admin_admins")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="admin_help")],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_to_main")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -338,7 +341,8 @@ def get_admin_future_bookings_keyboard(events: list[dict]) -> InlineKeyboardMark
 
 def get_admin_booking_detail_keyboard(
     telegram_user_id: str | None = None,
-    telegram_username: str | None = None
+    telegram_username: str | None = None,
+    booking_token: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Клавиатура карточки бронирования для админа."""
     keyboard = []
@@ -346,6 +350,12 @@ def get_admin_booking_detail_keyboard(
         keyboard.append([InlineKeyboardButton(text="💬 Связаться", callback_data=f"support_reply_{telegram_user_id}")])
     elif telegram_username:
         keyboard.append([InlineKeyboardButton(text="💬 Связаться", callback_data=f"support_reply_username_{telegram_username}")])
+
+    if booking_token:
+        keyboard.append([InlineKeyboardButton(
+            text="❌ Отменить бронирование",
+            callback_data=f"admin_booking_cancel_{booking_token}",
+        )])
 
     keyboard.extend([
         [InlineKeyboardButton(text="🔙 К списку бронирований", callback_data="admin_bookings")],
@@ -464,6 +474,42 @@ def get_existing_services_keyboard(
     
     keyboard.append([InlineKeyboardButton(text="✅ Готово", callback_data=done_callback)])
     keyboard.append([InlineKeyboardButton(text="🔙 Назад к услуге", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_admin_help_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура раздела помощи в админ-панели"""
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Добавить вопрос", callback_data="admin_faq_add")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_admin_faq_list_keyboard(faq_items: list[tuple[int, str, bool]]) -> InlineKeyboardMarkup:
+    """Клавиатура списка FAQ для админа."""
+    keyboard: list[list[InlineKeyboardButton]] = []
+    for faq_id, question, is_active in faq_items:
+        prefix = "✅" if is_active else "❌"
+        short_q = question if len(question) <= 50 else f"{question[:47]}..."
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"{prefix} {short_q}",
+                callback_data=f"admin_faq_open_{faq_id}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="➕ Добавить вопрос", callback_data="admin_faq_add")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_admin_faq_detail_keyboard(faq_id: int, is_active: bool) -> InlineKeyboardMarkup:
+    """Клавиатура управления записью FAQ."""
+    toggle_text = "❌ Деактивировать" if is_active else "✅ Активировать"
+    keyboard = [
+        [InlineKeyboardButton(text="✏️ Редактировать вопрос", callback_data=f"admin_faq_edit_q_{faq_id}")],
+        [InlineKeyboardButton(text="✏️ Редактировать ответ", callback_data=f"admin_faq_edit_a_{faq_id}")],
+        [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_faq_toggle_{faq_id}")],
+        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"admin_faq_delete_{faq_id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_help")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

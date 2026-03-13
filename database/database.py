@@ -1,5 +1,6 @@
 ﻿import aiosqlite
 from config import DATABASE_URL
+import re
 
 
 def _resolve_db_path(database_url: str) -> str:
@@ -54,6 +55,7 @@ class DatabaseManager:
                 telegram_id INTEGER UNIQUE,
                 vk_id INTEGER UNIQUE,
                 name VARCHAR(100) NOT NULL,
+                last_name VARCHAR(100),
                 phone VARCHAR(20),
                 email VARCHAR(100),
                 sale INTEGER DEFAULT 0,
@@ -122,6 +124,22 @@ class DatabaseManager:
             """
         )
 
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS booking_reminder_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel VARCHAR(20) NOT NULL,
+                event_id VARCHAR(255) NOT NULL,
+                client_id INTEGER NOT NULL,
+                booking_date DATE NOT NULL,
+                reminder_date DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(channel, event_id, reminder_date),
+                FOREIGN KEY (client_id) REFERENCES clients (id)
+            )
+            """
+        )
+
         # Backward-compatible migration for existing DBs
         cursor = await db.execute("PRAGMA table_info(services)")
         columns = [row[1] for row in await cursor.fetchall()]
@@ -132,7 +150,80 @@ class DatabaseManager:
                 "WHERE base_num_clients IS NULL OR base_num_clients < 1"
             )
 
+        cursor = await db.execute("PRAGMA table_info(clients)")
+        columns = [row[1] for row in await cursor.fetchall()]
+        if "last_name" not in columns:
+            await db.execute("ALTER TABLE clients ADD COLUMN last_name VARCHAR(100)")
+
+        await self._normalize_legacy_clients(db)
+
         await db.commit()
+
+    @staticmethod
+    def _normalize_phone(value: str | None) -> str | None:
+        if not value:
+            return None
+        digits = "".join(ch for ch in str(value) if ch.isdigit())
+        if len(digits) == 11 and digits.startswith(("7", "8")):
+            digits = digits[1:]
+        return digits if len(digits) == 10 else None
+
+    @staticmethod
+    def _normalize_last_name(value: str | None) -> str | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if len(text) < 2:
+            return None
+        cleaned = text.replace(" ", "").replace("-", "")
+        return text if cleaned.isalpha() else None
+
+    @staticmethod
+    def _normalize_email(value: str | None) -> str | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if text in {"0", "None", "none", "-"}:
+            return None
+        if re.fullmatch(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}", text):
+            return text
+        return None
+
+    @staticmethod
+    def _normalize_sale(value) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    async def _normalize_legacy_clients(self, db: aiosqlite.Connection):
+        cursor = await db.execute(
+            """
+            SELECT id, phone, email, sale, last_name
+            FROM clients
+            """
+        )
+        rows = await cursor.fetchall()
+
+        for client_id, phone, email, sale, last_name in rows:
+            normalized_phone = self._normalize_phone(phone)
+            fallback_phone = self._normalize_phone(last_name)
+            normalized_last_name = self._normalize_last_name(last_name)
+            normalized_email = self._normalize_email(email)
+            normalized_sale = self._normalize_sale(sale)
+
+            if normalized_phone is None and fallback_phone:
+                normalized_phone = fallback_phone
+                normalized_last_name = None
+
+            await db.execute(
+                """
+                UPDATE clients
+                SET phone = ?, email = ?, sale = ?, last_name = ?
+                WHERE id = ?
+                """,
+                (normalized_phone, normalized_email, normalized_sale, normalized_last_name, client_id),
+            )
 
     async def _insert_initial_data(self, db: aiosqlite.Connection):
         """Insert initial data into empty DB."""

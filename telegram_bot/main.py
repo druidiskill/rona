@@ -2,12 +2,11 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.enums import ParseMode
-
 from config import TELEGRAM_BOT_TOKEN
 from database import db_manager
 from telegram_bot.handlers import register_handlers
 from telegram_bot.middlewares import register_middlewares
+from telegram_bot.services.booking_reminders import run_booking_reminder_loop, send_telegram_booking_reminders
 
 # Настройка логирования
 logging.basicConfig(
@@ -31,6 +30,12 @@ async def main():
     # Регистрация middleware и обработчиков
     register_middlewares(dp)
     register_handlers(dp)
+    reminder_task = asyncio.create_task(
+        run_booking_reminder_loop(
+            sender_name="telegram",
+            send_callback=lambda: send_telegram_booking_reminders(bot),
+        )
+    )
     
     logger.info("Telegram бот запущен")
     
@@ -38,6 +43,11 @@ async def main():
         # Запуск бота
         await dp.start_polling(bot)
     finally:
+        reminder_task.cancel()
+        try:
+            await reminder_task
+        except asyncio.CancelledError:
+            pass
         await bot.session.close()
 
 if __name__ == "__main__":

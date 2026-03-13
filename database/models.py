@@ -47,6 +47,7 @@ class Client:
     telegram_id: Optional[int] = None
     vk_id: Optional[int] = None
     name: str = ""
+    last_name: str = ""
     phone: Optional[str] = None
     email: Optional[str] = None
     sale: int = 0  # скидка в процентах
