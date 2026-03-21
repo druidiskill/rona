@@ -1,6 +1,9 @@
-﻿import logging
+import logging
+import ssl
 
-from vkbottle import Bot
+import certifi
+from aiohttp import TCPConnector
+from vkbottle import API, AiohttpClient, Bot
 
 from config import REDIS_URL, VK_BOT_TOKEN, VK_REDIS_KEY_PREFIX, VK_REDIS_STATE_TTL_SECONDS
 from database import db_manager
@@ -14,6 +17,13 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _build_vk_api() -> API:
+    # Reuse the same CA bundle that works for requests in this environment.
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    http_client = AiohttpClient(connector=TCPConnector(ssl=ssl_context))
+    return API(token=VK_BOT_TOKEN, http_client=http_client)
 
 
 async def build_bot() -> Bot:
@@ -36,7 +46,7 @@ async def build_bot() -> Bot:
             "Запустите Redis и проверьте .env"
         ) from e
 
-    bot = Bot(token=VK_BOT_TOKEN, state_dispenser=state_dispenser)
+    bot = Bot(api=_build_vk_api(), state_dispenser=state_dispenser)
     register_handlers(bot)
 
     async def _vk_reminder_task():
