@@ -283,6 +283,9 @@ async def process_faq_question(message: Message, state: FSMContext, is_admin: bo
     if not question:
         await message.answer("❌ Вопрос не может быть пустым. Введите вопрос:")
         return
+    if len(question) > 40:
+        await message.answer("❌ Вопрос не должен быть длиннее 40 символов. Введите короче:")
+        return
 
     await state.update_data(faq_question=question)
     await state.set_state(AdminStates.waiting_for_faq_answer)

@@ -16,7 +16,7 @@ class VkSupportState(BaseStateGroup, Enum):
 def _faq_keyboard(page: int, total_pages: int, items: list[tuple[int, str]]) -> str:
     kb = Keyboard(one_time=False, inline=False)
     for faq_id, question in items:
-        short_question = question if len(question) <= 64 else f"{question[:61]}..."
+        short_question = question if len(question) <= 37 else f"{question[:34]}..."
         kb.add(
             Text(
                 f"❓ {short_question}",
