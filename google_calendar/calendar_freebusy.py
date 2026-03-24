@@ -40,7 +40,7 @@ def _load_json_objects(path: str) -> List[dict]:
     Загружает один или несколько JSON-объектов из файла.
     Поддерживает "склеенные" JSON-объекты в одном файле.
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         raw = f.read().strip()
 
     if not raw:
@@ -155,6 +155,9 @@ def build_calendar_service():
                 service_account_payload,
                 scopes=SCOPES
             )
+            # На Windows стек google-auth-httplib2 может падать уже на первом refresh().
+            # Предварительно получаем access token через requests-based transport.
+            creds.refresh(Request())
 
     if not creds:
         raise FileNotFoundError(

@@ -50,6 +50,7 @@ class Client:
     last_name: str = ""
     phone: Optional[str] = None
     email: Optional[str] = None
+    discount_code: Optional[str] = None
     sale: int = 0  # скидка в процентах
     created_at: Optional[datetime] = None
 

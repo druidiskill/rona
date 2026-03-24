@@ -55,6 +55,8 @@ def get_booking_form_keyboard(service_id: int, booking_data: dict = None) -> Inl
     last_name_status = "✅" if booking_data.get('last_name') else "‼️"
     phone_status = "✅" if booking_data.get('phone') else "‼️"
     guests_status = "✅" if booking_data.get('guests_count') else "‼️"
+    discount_status = "✅" if booking_data.get('discount_code') else "⚪"
+    comment_status = "✅" if booking_data.get('comment') else "⚪"
     
     keyboard = [
         [InlineKeyboardButton(text=f"{date_status} Дата", callback_data=f"booking_date_{service_id}")],
@@ -62,6 +64,8 @@ def get_booking_form_keyboard(service_id: int, booking_data: dict = None) -> Inl
         [InlineKeyboardButton(text=f"{name_status} Имя", callback_data=f"booking_name_{service_id}")],
         [InlineKeyboardButton(text=f"{last_name_status} Фамилия", callback_data=f"booking_last_name_{service_id}")],
         [InlineKeyboardButton(text=f"{phone_status} Номер телефона", callback_data=f"booking_phone_{service_id}")],
+        [InlineKeyboardButton(text=f"{discount_status} Код для скидки", callback_data=f"booking_discount_{service_id}")],
+        [InlineKeyboardButton(text=f"{comment_status} Комментарий", callback_data=f"booking_comment_{service_id}")],
         [InlineKeyboardButton(text=f"{guests_status} Кол-во гостей", callback_data=f"booking_guests_{service_id}")],
         [InlineKeyboardButton(text="⏰ Продолжительность", callback_data=f"booking_duration_{service_id}")],
         [InlineKeyboardButton(text="➕ Доп. услуги", callback_data=f"booking_extras_{service_id}")],

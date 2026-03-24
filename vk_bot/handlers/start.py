@@ -9,6 +9,7 @@ from telegram_bot.services.calendar_queries import (
     is_calendar_available,
 )
 from vk_bot.handlers.booking import get_services_booking_keyboard
+from vk_bot.handlers.help import send_faq_list
 from vk_bot.keyboards import get_back_to_main_keyboard, get_main_menu_keyboard
 
 
@@ -36,15 +37,25 @@ def _strip_leading_emoji(text: str) -> str:
 
 
 async def _send_main_menu(message: Message):
+    vk_first_name = "Пользователь"
+    try:
+        user = await message.get_user()
+        if getattr(user, "first_name", None):
+            vk_first_name = str(user.first_name).strip()
+    except Exception:
+        pass
+
     client = await client_service.get_or_create_client(
         vk_id=message.from_id,
-        name="Пользователь",
+        name=vk_first_name,
     )
-    greeting_name = (
-        client.name
-        if client and client.name and client.name.strip() and client.name != "Пользователь"
-        else "Пользователь"
-    )
+    greeting_name = vk_first_name
+    if client and client.name and client.name.strip() and client.name != "Пользователь":
+        greeting_name = client.name.strip()
+    elif client and vk_first_name != "Пользователь" and client.name != vk_first_name:
+        client.name = vk_first_name
+        await client_service.client_repo.update(client)
+
     is_admin = message.from_id in ADMIN_IDS
     text = (
         "🎉 Добро пожаловать в фотостудию!\n\n"
@@ -119,15 +130,7 @@ async def _send_contacts(message: Message):
 
 
 async def _send_help(message: Message):
-    await message.answer(
-        "🤖 Помощь по боту\n\n"
-        "Основные функции:\n"
-        "• Услуги\n"
-        "• Мои бронирования\n"
-        "• Контакты\n\n"
-        "Следующий шаг: подключаем полноценный процесс бронирования.",
-        keyboard=get_back_to_main_keyboard(),
-    )
+    await send_faq_list(message, page=0)
 
 
 def register_start_handlers(bot: Bot):
@@ -158,6 +161,8 @@ def register_start_handlers(bot: Bot):
             return
 
         await message.answer(
-            "🤔 Не понимаю команду.\nИспользуйте кнопки меню или напишите /start.",
+            "⁉️ Если хотите задать вопрос Администратору:\n"
+            "Главное меню -> Помощь -> Связаться с администратором\n"
+            "Затем введи свой вопрос",
             keyboard=get_main_menu_keyboard(is_admin=message.from_id in ADMIN_IDS),
         )

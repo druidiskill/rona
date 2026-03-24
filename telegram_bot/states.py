@@ -6,6 +6,8 @@ class BookingStates(StatesGroup):
     entering_name = State()
     entering_last_name = State()
     entering_phone = State()
+    entering_discount_code = State()
+    entering_comment = State()
     entering_guests_count = State()
     entering_duration = State()
     entering_email = State()

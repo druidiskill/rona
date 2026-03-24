@@ -5,6 +5,7 @@ from enum import Enum
 from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, Text
 from vkbottle.bot import Bot, Message
 
+from config import VK_GROUP_ID
 from database import admin_repo, faq_repo, support_repo
 from vk_bot.keyboards import get_main_menu_keyboard
 
@@ -32,16 +33,16 @@ def _faq_keyboard(page: int, total_pages: int, items: list[tuple[int, str]]) -> 
             kb.add(Text("➡️", payload={"a": "faq_page", "p": page + 1}), color=KeyboardButtonColor.SECONDARY)
         kb.row()
 
+    kb.add(
+        Text("💬 Связаться с администратором", payload={"a": "faq_contact"}),
+        color=KeyboardButtonColor.POSITIVE,
+    ).row()
     kb.add(Text("🔙 Назад", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 
 def _support_keyboard() -> str:
     kb = Keyboard(one_time=False, inline=False)
-    kb.add(
-        Text("✅ Закончить диалог", payload={"a": "faq_support_end"}),
-        color=KeyboardButtonColor.NEGATIVE,
-    ).row()
     kb.add(Text("🔙 Назад", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
@@ -58,14 +59,13 @@ async def _get_faq_page_data(page: int) -> tuple[list[tuple[int, str]], int, int
     return items, total_pages, page
 
 
-async def _send_faq_list(message: Message, page: int = 0) -> None:
+async def send_faq_list(message: Message, page: int = 0) -> None:
     items, total_pages, page = await _get_faq_page_data(page)
     text = "ℹ️ Часто задаваемые вопросы\n\n"
     if not items:
         text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
     else:
-        text += "Выберите вопрос кнопкой ниже:"
-
+        text += "Выберите вопрос кнопкой ниже или напишите администратору."
     await message.answer(text, keyboard=_faq_keyboard(page, total_pages, items))
 
 
@@ -74,17 +74,22 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
     active_admins = [admin for admin in admins if admin.is_active and admin.vk_id]
     if not active_admins:
         await message.answer(
-            "❌ Сейчас нет доступных администраторов. Попробуйте позже.",
+            "Сейчас нет доступных администраторов. Попробуйте позже.",
+            keyboard=_support_keyboard(),
+        )
+        return
+
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(
+            "Введите текст вопроса или нажмите «Назад».",
             keyboard=_support_keyboard(),
         )
         return
 
     user = await message.get_user()
-    user_label = f"{user.first_name} {user.last_name}".strip() or "Пользователь"
-    text = (message.text or "").strip()
-    if not text:
-        await message.answer("Отправьте текст сообщения.", keyboard=_support_keyboard())
-        return
+    user_label = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or "Пользователь"
+    dialog_link = f"https://vk.com/gim{VK_GROUP_ID}/convo/{message.from_id}"
 
     await support_repo.add_message(
         user_id=message.from_id,
@@ -94,11 +99,12 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
         text=text,
     )
 
-    header = (
-        "🆘 Новый запрос поддержки\n\n"
+    admin_text = (
+        "🔴 Новый вопрос от пользователя\n\n"
         f"👤 Пользователь: {user_label}\n"
         f"🆔 VK ID: {message.from_id}\n\n"
-        f"💬 Сообщение:\n{text}"
+        f"❓ Вопрос:\n{text}\n\n"
+        f"🔗 Диалог: {dialog_link}"
     )
 
     for admin in active_admins:
@@ -106,7 +112,7 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
             sent = await message.ctx_api.messages.send(
                 peer_id=admin.vk_id,
                 random_id=0,
-                message=header,
+                message=admin_text,
             )
             admin_msg_id = sent[0].conversation_message_id if isinstance(sent, list) else sent
             await support_repo.add_message(
@@ -114,26 +120,26 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
                 chat_id=admin.vk_id,
                 message_id=int(admin_msg_id or 0),
                 role="admin_alert",
-                text=None,
+                text=admin_text,
             )
         except Exception as exc:
             print(f"Не удалось отправить сообщение админу {admin.vk_id}: {exc}")
 
     await message.answer(
-        "✅ Сообщение отправлено администраторам. Мы скоро ответим.",
-        keyboard=_support_keyboard(),
+        "Спасибо за обращение. Администратор ответит Вам на все вопросы в ближайшее время!",
+        keyboard=get_main_menu_keyboard(),
     )
 
 
 def register_help_handlers(bot: Bot) -> None:
     @bot.on.message(text=["ℹ️ Помощь", "Помощь", "помощь"])
     async def help_entry(message: Message):
-        await _send_faq_list(message, page=0)
+        await send_faq_list(message, page=0)
 
     @bot.on.message(payload_contains={"a": "faq_page"})
     async def faq_page(message: Message):
         payload = message.get_payload_json() or {}
-        await _send_faq_list(message, page=int(payload.get("p", 0)))
+        await send_faq_list(message, page=int(payload.get("p", 0)))
 
     @bot.on.message(payload_contains={"a": "faq_open"})
     async def faq_open(message: Message):
@@ -153,18 +159,8 @@ def register_help_handlers(bot: Bot) -> None:
     async def faq_contact(message: Message):
         await bot.state_dispenser.set(message.peer_id, VkSupportState.user_chat)
         await message.answer(
-            "🆘 Поддержка\n\n"
-            "Опишите ваш вопрос одним сообщением.\n"
-            "Чтобы выйти из режима поддержки, нажмите «✅ Закончить диалог».",
+            "💬 Связь с администратором\n\nВведите ваш вопрос одним сообщением.",
             keyboard=_support_keyboard(),
-        )
-
-    @bot.on.message(payload_contains={"a": "faq_support_end"}, state=VkSupportState.user_chat)
-    async def faq_support_end(message: Message):
-        await bot.state_dispenser.delete(message.peer_id)
-        await message.answer(
-            "🏠 Главное меню\n\nВыберите действие:",
-            keyboard=get_main_menu_keyboard(),
         )
 
     @bot.on.message(payload_contains={"a": "faq_back"})
@@ -177,12 +173,13 @@ def register_help_handlers(bot: Bot) -> None:
 
     @bot.on.message(state=VkSupportState.user_chat)
     async def faq_support_message(message: Message):
-        text = (message.text or "").strip().lower()
-        if text in {"закончить диалог", "стоп", "/stop", "назад", "🔙 назад"}:
+        payload = message.get_payload_json() or {}
+        if payload.get("a") == "faq_back":
             await bot.state_dispenser.delete(message.peer_id)
             await message.answer(
                 "🏠 Главное меню\n\nВыберите действие:",
                 keyboard=get_main_menu_keyboard(),
             )
             return
+        await bot.state_dispenser.delete(message.peer_id)
         await _forward_user_to_vk_admins(message)

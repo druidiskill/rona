@@ -58,6 +58,7 @@ class DatabaseManager:
                 last_name VARCHAR(100),
                 phone VARCHAR(20),
                 email VARCHAR(100),
+                discount_code VARCHAR(100),
                 sale INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -154,6 +155,8 @@ class DatabaseManager:
         columns = [row[1] for row in await cursor.fetchall()]
         if "last_name" not in columns:
             await db.execute("ALTER TABLE clients ADD COLUMN last_name VARCHAR(100)")
+        if "discount_code" not in columns:
+            await db.execute("ALTER TABLE clients ADD COLUMN discount_code VARCHAR(100)")
 
         await self._normalize_legacy_clients(db)
 
@@ -188,6 +191,15 @@ class DatabaseManager:
         if re.fullmatch(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}", text):
             return text
         return None
+
+    @staticmethod
+    def _normalize_discount_code(value: str | None) -> str | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if text in {"0", "None", "none", "-"}:
+            return None
+        return text[:100]
 
     @staticmethod
     def _normalize_sale(value) -> int:

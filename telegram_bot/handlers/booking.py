@@ -114,6 +114,11 @@ def _format_full_name(booking_data: dict) -> str:
     return full or "Не указано"
 
 
+def _format_optional_booking_value(value: str | None) -> str:
+    text = (value or "").strip()
+    return text or "Не указан"
+
+
 def _normalize_stored_phone(phone: str | None) -> str | None:
     if not phone:
         return None
@@ -145,6 +150,8 @@ def _build_booking_form_text(service_name: str, booking_data: dict, state_data: 
     text += f"‼️ <b>Имя:</b> {booking_data.get('name') or 'Не указано'}\n"
     text += f"‼️ <b>Фамилия:</b> {booking_data.get('last_name') or 'Не указано'}\n"
     text += f"‼️ <b>Номер телефона:</b> {booking_data.get('phone') or 'Не указан'}\n"
+    text += f"🏷️ <b>Код для скидки:</b> {_format_optional_booking_value(booking_data.get('discount_code'))}\n"
+    text += f"💬 <b>Комментарий:</b> {_format_optional_booking_value(booking_data.get('comment'))}\n"
     text += f"‼️ <b>Количество гостей:</b> {guests_display}\n"
     text += f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n"
     text += f"➕ <b>Доп. услуги:</b> {_format_extras_display(booking_data.get('extras', []))}\n"
@@ -169,9 +176,11 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
     existing_client = await client_repo.get_by_telegram_id(telegram_id)
 
     normalized_phone = _normalize_stored_phone(existing_client.phone if existing_client else None)
-    if existing_client and normalized_phone:
-        phone_display = f"+7 {normalized_phone[:3]} {normalized_phone[3:6]} {normalized_phone[6:8]} {normalized_phone[8:10]}"
-        
+    if existing_client:
+        phone_display = None
+        if normalized_phone:
+            phone_display = f"+7 {normalized_phone[:3]} {normalized_phone[3:6]} {normalized_phone[6:8]} {normalized_phone[8:10]}"
+
         await state.update_data(
             service_id=service_id,
             service_name=service.name,
@@ -183,6 +192,8 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
                 'name': existing_client.name,
                 'last_name': getattr(existing_client, "last_name", None),
                 'phone': phone_display,
+                'discount_code': getattr(existing_client, "discount_code", None),
+                'comment': None,
                 'guests_count': None,
                 'duration': min_duration,
                 'is_all_day': False,
@@ -204,6 +215,8 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
                 'name': None,
                 'last_name': None,
                 'phone': None,
+                'discount_code': None,
+                'comment': None,
                 'guests_count': None,
                 'duration': min_duration,
                 'is_all_day': False,
@@ -694,6 +707,99 @@ async def process_phone_input(message: Message, state: FSMContext):
     
     await state.set_state(BookingStates.filling_form)
     
+    service_id = data.get('service_id')
+    if service_id:
+        data = await state.get_data()
+        booking_data = data.get('booking_data', {})
+        service_name = booking_data.get('service_name') or data.get('service_name', '')
+        text = _build_booking_form_text(service_name, booking_data, data)
+        await message.answer(
+            text,
+            reply_markup=get_booking_form_keyboard(service_id, booking_data),
+            parse_mode="HTML"
+        )
+
+async def start_discount_code_input(callback: CallbackQuery, state: FSMContext):
+    """Запрос кода для скидки."""
+    parts = callback.data.split("_")
+    service_id = int(parts[2])
+    await state.set_state(BookingStates.entering_discount_code)
+    await callback.message.edit_text(
+        "🏷️ <b>Введите код для скидки:</b>\n\n"
+        "Поле необязательное. Если код не нужен, нажмите кнопку «Назад».",
+        parse_mode="HTML"
+        ,
+        reply_markup=_get_back_to_booking_form_keyboard(service_id),
+    )
+
+
+async def process_discount_code_input(message: Message, state: FSMContext):
+    """Обработка скидочного кода."""
+    discount_code = (message.text or "").strip()
+    if len(discount_code) > 100:
+        await message.answer(
+            "⚠️ <b>Код слишком длинный</b>\n\n"
+            "Максимальная длина скидочного кода: 100 символов.",
+            parse_mode="HTML"
+        )
+        return
+
+    data = await state.get_data()
+    booking_data = data.get('booking_data', {})
+    booking_data['discount_code'] = discount_code
+    if 'service_name' not in booking_data:
+        booking_data['service_name'] = data.get('service_name', '')
+    await state.update_data(booking_data=booking_data)
+
+    await state.set_state(BookingStates.filling_form)
+
+    service_id = data.get('service_id')
+    if service_id:
+        data = await state.get_data()
+        booking_data = data.get('booking_data', {})
+        service_name = booking_data.get('service_name') or data.get('service_name', '')
+        text = _build_booking_form_text(service_name, booking_data, data)
+        await message.answer(
+            text,
+            reply_markup=get_booking_form_keyboard(service_id, booking_data),
+            parse_mode="HTML"
+        )
+
+
+async def start_comment_input(callback: CallbackQuery, state: FSMContext):
+    """Запрос комментария к бронированию."""
+    parts = callback.data.split("_")
+    service_id = int(parts[2])
+    await state.set_state(BookingStates.entering_comment)
+    await callback.message.edit_text(
+        "💬 <b>Введите комментарий к бронированию:</b>\n\n"
+        "Поле необязательное. Если комментарий не нужен, нажмите кнопку «Назад».",
+        parse_mode="HTML"
+        ,
+        reply_markup=_get_back_to_booking_form_keyboard(service_id),
+    )
+
+
+async def process_comment_input(message: Message, state: FSMContext):
+    """Обработка комментария к бронированию."""
+    comment = (message.text or "").strip()
+    if len(comment) > 500:
+        await message.answer(
+            "⚠️ <b>Комментарий слишком длинный</b>\n\n"
+            "Максимальная длина комментария: 500 символов.",
+            parse_mode="HTML"
+        )
+        return
+
+    data = await state.get_data()
+    booking_data = data.get('booking_data', {})
+    booking_data['comment'] = comment
+    if 'service_name' not in booking_data:
+        booking_data['service_name'] = data.get('service_name', '')
+    await state.update_data(booking_data=booking_data)
+
+    await state.set_state(BookingStates.filling_form)
+
     service_id = data.get('service_id')
     if service_id:
         data = await state.get_data()
@@ -1285,11 +1391,17 @@ Service ID: {service_id}
 <b>Дополнительные услуги:</b>
 {extras_display}
 
+<b>Код для скидки:</b>
+{booking_data.get('discount_code') or 'не указан'}
+
+<b>Комментарий:</b>
+{booking_data.get('comment') or 'не указан'}
+
 <b><u>ВНИМАНИЕ</u></b> Автоматически на вашу электронную почту приходит подтверждение о <b><u>предварительном бронировании времени</u></b><u>.</u> Вам нужно:
 
 <ul><li>дождаться информации о предоплате</li><li>отправить нам скриншот оплаты в течение 24-х часов</li><li>получить от нас подтверждение, что желаемая дата и время забронировано.</li></ul>
 
-�������� ����������, �� ������������ � <a href="https://www.google.com/url?q=https%3A%2F%2Fvk.com%2Fpages%3Fhash%3Ddd2aea6878aabba105%26oid%3D-174809315%26p%3D%25D0%259F%25D0%25A0%25D0%2590%25D0%2592%25D0%2598%25D0%259B%25D0%2590_%25D0%2590%25D0%25A0%25D0%2595%25D0%259D%25D0%2594%25D0%25AB_%25D0%25A4%25D0%259E%25D0%25A2%25D0%259E%25D0%25A1%25D0%25A2%25D0%25A3%25D0%2594%25D0%2598%25D0%2598&amp;sa=D&amp;source=calendar&amp;ust=1762503000000000&amp;usg=AOvVaw0LR6y1Ukh_SRdIeJXIrHOT" target="_blank" data-link-id="34" rel="noopener noreferrer">��������� ������ ����������</a>
+Пожалуйста, ознакомьтесь с <a href="https://www.google.com/url?q=https%3A%2F%2Fvk.com%2Fpages%3Fhash%3Ddd2aea6878aabba105%26oid%3D-174809315%26p%3D%25D0%259F%25D0%25A0%25D0%2590%25D0%2592%25D0%2598%25D0%259B%25D0%2590_%25D0%2590%25D0%25A0%25D0%2595%25D0%259D%25D0%2594%25D0%25AB_%25D0%25A4%25D0%259E%25D0%25A2%25D0%259E%25D0%25A1%25D0%25A2%25D0%25A3%25D0%2594%25D0%2598%25D0%2598&amp;sa=D&amp;source=calendar&amp;ust=1762503000000000&amp;usg=AOvVaw0LR6y1Ukh_SRdIeJXIrHOT" target="_blank" data-link-id="34" rel="noopener noreferrer">правилами нашей фотостудии</a>
             """.strip()
             
             calendar_service = GoogleCalendarService()
@@ -1351,6 +1463,7 @@ Service ID: {service_id}
                     last_name=booking_data.get('last_name') or "",
                     phone=phone_clean,
                     email=booking_data.get('email'),
+                    discount_code=booking_data.get('discount_code'),
                 )
             )
             client = await client_repo.get_by_id(client_id)
@@ -1358,6 +1471,7 @@ Service ID: {service_id}
             client.name = booking_data['name']
             client.last_name = booking_data.get('last_name') or ""
             client.phone = phone_clean
+            client.discount_code = booking_data.get('discount_code')
             if booking_data.get('email'):
                 client.email = booking_data.get('email')
             await client_repo.update(client)
@@ -1398,6 +1512,8 @@ Service ID: {service_id}
             f"📱 Телефон: {phone_html}\n"
             f"👥 Гостей: {booking_data['guests_count']}\n"
             f"➕ Доп. услуги: {extras_display}\n"
+            f"🏷️ Код для скидки: {booking_data.get('discount_code') or 'Не указан'}\n"
+            f"💬 Комментарий: {booking_data.get('comment') or 'Не указан'}\n"
         )
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1428,6 +1544,8 @@ Service ID: {service_id}
         f"👤 <b>Клиент:</b> {_format_full_name(booking_data)}\n"
         f"📱 <b>Телефон:</b> {booking_data['phone']}\n"
         f"👥 <b>Гостей:</b> {booking_data['guests_count']}\n"
+        f"🏷️ <b>Код для скидки:</b> {booking_data.get('discount_code') or 'Не указан'}\n"
+        f"💬 <b>Комментарий:</b> {booking_data.get('comment') or 'Не указан'}\n"
         f"⏰ <b>Продолжительность:</b> {duration_minutes} мин.\n\n"
         f"🎯 <b>Услуга:</b> {service_name}\n\n"
         f"📩 <b>Спасибо за бронирование! Ожидайте информацию о предоплате.</b>",
@@ -1465,6 +1583,10 @@ def register_booking_handlers(dp: Dispatcher):
     dp.message.register(process_last_name_input, BookingStates.entering_last_name)
     dp.callback_query.register(start_phone_input, F.data.startswith("booking_phone_"))
     dp.message.register(process_phone_input, BookingStates.entering_phone)
+    dp.callback_query.register(start_discount_code_input, F.data.startswith("booking_discount_"))
+    dp.message.register(process_discount_code_input, BookingStates.entering_discount_code)
+    dp.callback_query.register(start_comment_input, F.data.startswith("booking_comment_"))
+    dp.message.register(process_comment_input, BookingStates.entering_comment)
     dp.callback_query.register(start_guests_count_input, F.data.startswith("booking_guests_"))
     dp.message.register(process_guests_count_input, BookingStates.entering_guests_count)
     dp.callback_query.register(start_duration_input, F.data.startswith("booking_duration_"))
@@ -1479,11 +1601,4 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(start_extras_input, F.data.startswith("booking_extras_"))
     dp.callback_query.register(confirm_booking, F.data.startswith("booking_confirm_"))
     dp.callback_query.register(cancel_booking, F.data.startswith("booking_cancel_"))
-
-
-
-
-
-
-
 

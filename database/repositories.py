@@ -84,7 +84,7 @@ class ClientRepository:
     """Р РµРїРѕР·РёС‚РѕСЂРёР№ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ РєР»РёРµРЅС‚Р°РјРё"""
 
     CLIENT_SELECT = """
-        SELECT id, telegram_id, vk_id, name, last_name, phone, email, sale, created_at
+        SELECT id, telegram_id, vk_id, name, last_name, phone, email, discount_code, sale, created_at
         FROM clients
     """
     
@@ -135,9 +135,9 @@ class ClientRepository:
         """РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                INSERT INTO clients (telegram_id, vk_id, name, last_name, phone, email, sale)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.sale))
+                INSERT INTO clients (telegram_id, vk_id, name, last_name, phone, email, discount_code, sale)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.discount_code, client.sale))
             await db.commit()
             return cursor.lastrowid
     
@@ -145,9 +145,9 @@ class ClientRepository:
         """РћР±РЅРѕРІР»РµРЅРёРµ РєР»РёРµРЅС‚Р°"""
         async with aiosqlite.connect(self.db_manager.db_path) as db:
             cursor = await db.execute("""
-                UPDATE clients SET telegram_id=?, vk_id=?, name=?, last_name=?, phone=?, email=?, sale=?
+                UPDATE clients SET telegram_id=?, vk_id=?, name=?, last_name=?, phone=?, email=?, discount_code=?, sale=?
                 WHERE id=?
-            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.sale, client.id))
+            """, (client.telegram_id, client.vk_id, client.name, client.last_name, client.phone, client.email, client.discount_code, client.sale, client.id))
             await db.commit()
             return cursor.rowcount > 0
     
@@ -162,8 +162,8 @@ class ClientRepository:
         """РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ СЃС‚СЂРѕРєРё Р‘Р” РІ РјРѕРґРµР»СЊ Client"""
         return Client(
             id=row[0], telegram_id=row[1], vk_id=row[2], name=row[3],
-            last_name=row[4], phone=row[5], email=row[6], sale=row[7],
-            created_at=datetime.fromisoformat(row[8]) if row[8] else None
+            last_name=row[4], phone=row[5], email=row[6], discount_code=row[7], sale=row[8],
+            created_at=datetime.fromisoformat(row[9]) if row[9] else None
         )
 
 class BookingRepository:

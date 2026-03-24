@@ -32,10 +32,17 @@ class GoogleCalendarService:
 
     def _parse_event_time(self, event: Dict[str, Any], key: str) -> Optional[datetime]:
         raw = event.get(key, {})
+        try:
+            tz = ZoneInfo(self.time_zone)
+        except ZoneInfoNotFoundError:
+            tz = ZoneInfo("UTC")
         if "dateTime" in raw:
-            return datetime.fromisoformat(raw["dateTime"])
+            value = datetime.fromisoformat(raw["dateTime"])
+            if value.tzinfo is None:
+                return value.replace(tzinfo=tz)
+            return value.astimezone(tz)
         if "date" in raw:
-            return datetime.fromisoformat(f"{raw['date']}T00:00:00")
+            return datetime.fromisoformat(f"{raw['date']}T00:00:00").replace(tzinfo=tz)
         return None
 
     async def get_free_slots(
@@ -92,6 +99,7 @@ class GoogleCalendarService:
                 calendarId=self.calendar_id,
                 timeMin=start.isoformat(),
                 timeMax=end.isoformat(),
+                timeZone=self.time_zone,
                 singleEvents=True,
                 orderBy="startTime",
                 q=query,

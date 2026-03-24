@@ -13,6 +13,4 @@ def get_main_menu_keyboard(is_admin: bool = False) -> str:
 
 
 def get_back_to_main_keyboard() -> str:
-    keyboard = Keyboard(one_time=False, inline=False)
-    keyboard.add(Text("🏠 Главное меню"), color=KeyboardButtonColor.SECONDARY)
-    return keyboard.get_json()
+    return get_main_menu_keyboard()
