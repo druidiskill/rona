@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from enum import Enum
 
-from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, Text
+from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, PhotoMessageUploader, Text
 from vkbottle.bot import Bot, Message
 
 from config import ADMIN_IDS_VK, TELEGRAM_BOT_TOKEN
@@ -19,6 +19,7 @@ from telegram_bot.services.booking_formatters import (
     format_booking_guests,
     format_extras_display,
 )
+from telegram_bot.utils.photos import list_service_photos
 from vk_bot.keyboards import get_main_menu_keyboard
 
 try:
@@ -115,6 +116,41 @@ def _get_service_details_keyboard(service_id: int) -> str:
     kb.add(Text("📸 Услуги"), color=KeyboardButtonColor.PRIMARY).row()
     kb.add(Text("🏠 Главное меню"), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
+
+
+async def _upload_vk_service_photo(message: Message, photo_path) -> str | None:
+    uploader = PhotoMessageUploader(message.ctx_api)
+    return await uploader.upload(str(photo_path), peer_id=message.peer_id)
+
+
+async def _send_service_details(message: Message, service) -> None:
+    text = _build_service_details_text(service)
+    photo_paths = list_service_photos(service.id or 0)[:10]
+    attachments: list[str] = []
+
+    for photo_path in photo_paths:
+        try:
+            attachment = await _upload_vk_service_photo(message, photo_path)
+        except Exception as exc:
+            print(f"Не удалось загрузить фото услуги {service.id} в VK: {exc}")
+            attachment = None
+        if attachment:
+            attachments.append(attachment)
+
+    if attachments:
+        await message.ctx_api.messages.send(
+            peer_id=message.peer_id,
+            random_id=0,
+            message=text,
+            attachment=",".join(attachments),
+            keyboard=_get_service_details_keyboard(service.id),
+        )
+        return
+
+    await message.answer(
+        text,
+        keyboard=_get_service_details_keyboard(service.id),
+    )
 
 
 def _normalize_phone(phone: str) -> str | None:
@@ -410,10 +446,7 @@ def register_booking_handlers(bot: Bot):
             await message.answer("Услуга не найдена.", keyboard=get_main_menu_keyboard(is_admin=message.from_id in ADMIN_IDS))
             return
 
-        await message.answer(
-            _build_service_details_text(service),
-            keyboard=_get_service_details_keyboard(service_id),
-        )
+        await _send_service_details(message, service)
 
     @bot.on.message(payload_contains={"a": "bk_service_confirm"})
     async def booking_service_confirm(message: Message):

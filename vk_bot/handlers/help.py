@@ -69,27 +69,19 @@ async def send_faq_list(message: Message, page: int = 0) -> None:
     await message.answer(text, keyboard=_faq_keyboard(page, total_pages, items))
 
 
-async def _forward_user_to_vk_admins(message: Message) -> None:
+async def forward_question_to_vk_admins(message: Message) -> bool:
     admins = await admin_repo.get_all()
     active_admins = [admin for admin in admins if admin.is_active and admin.vk_id]
     if not active_admins:
-        await message.answer(
-            "РЎРµР№С‡Р°СЃ РЅРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРІ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
-            keyboard=_support_keyboard(),
-        )
-        return
+        return False
 
     text = (message.text or "").strip()
     if not text:
-        await message.answer(
-            "Р’РІРµРґРёС‚Рµ С‚РµРєСЃС‚ РІРѕРїСЂРѕСЃР° РёР»Рё РЅР°Р¶РјРёС‚Рµ В«РќР°Р·Р°РґВ».",
-            keyboard=_support_keyboard(),
-        )
-        return
+        return False
 
     user = await message.get_user()
-    user_label = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ"
-    dialog_link = f"https://vk.com/gim{VK_GROUP_ID}/convo/{message.from_id}"
+    user_label = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or "Пользователь"
+    dialog_link = f"https://vk.com/gim{VK_GROUP_ID}/convo/{message.from_id}?entrypoint=list_all"
 
     await support_repo.add_message(
         user_id=message.from_id,
@@ -99,13 +91,7 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
         text=text,
     )
 
-    admin_text = (
-        "рџ”ґ РќРѕРІС‹Р№ РІРѕРїСЂРѕСЃ РѕС‚ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ\n\n"
-        f"рџ‘¤ РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ: {user_label}\n"
-        f"рџ†” VK ID: {message.from_id}\n\n"
-        f"вќ“ Р’РѕРїСЂРѕСЃ:\n{text}\n\n"
-        f"рџ”— Р”РёР°Р»РѕРі: {dialog_link}"
-    )
+    admin_text = f"{text}\n{dialog_link}"
 
     for admin in active_admins:
         try:
@@ -120,10 +106,28 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
                 chat_id=admin.vk_id,
                 message_id=int(admin_msg_id or 0),
                 role="admin_alert",
-                text=admin_text,
+                text=f"{user_label}\n{admin_text}",
             )
         except Exception as exc:
-            print(f"РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ Р°РґРјРёРЅСѓ {admin.vk_id}: {exc}")
+            print(f"Не удалось отправить сообщение админу {admin.vk_id}: {exc}")
+
+    return True
+
+
+async def _forward_user_to_vk_admins(message: Message) -> None:
+    if not (message.text or "").strip():
+        await message.answer(
+            "Р’РІРµРґРёС‚Рµ С‚РµРєСЃС‚ РІРѕРїСЂРѕСЃР° РёР»Рё РЅР°Р¶РјРёС‚Рµ В«РќР°Р·Р°РґВ».",
+            keyboard=_support_keyboard(),
+        )
+        return
+
+    forwarded = await forward_question_to_vk_admins(message)
+    if not forwarded:
+        await message.answer(
+            "РЎРµР№С‡Р°СЃ РЅРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРІ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
+            keyboard=_support_keyboard(),
+        )
 
 
 

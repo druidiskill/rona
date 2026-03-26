@@ -9,7 +9,7 @@ from telegram_bot.services.calendar_queries import (
     is_calendar_available,
 )
 from vk_bot.handlers.booking import get_services_booking_keyboard
-from vk_bot.handlers.help import send_faq_list
+from vk_bot.handlers.help import forward_question_to_vk_admins, send_faq_list
 from vk_bot.keyboards import get_back_to_main_keyboard, get_main_menu_keyboard
 
 
@@ -158,6 +158,14 @@ def register_start_handlers(bot: Bot):
 
         if text == "помощь" or text_wo_emoji == "помощь":
             await _send_help(message)
+            return
+
+        forwarded = await forward_question_to_vk_admins(message)
+        if forwarded:
+            await message.answer(
+                "Дождитесь ответа администратора",
+                keyboard=get_main_menu_keyboard(is_admin=message.from_id in ADMIN_IDS),
+            )
             return
 
         await message.answer(
