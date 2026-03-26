@@ -1414,31 +1414,6 @@ Service ID: {service_id}
             )
             print(f"[CALENDAR] Событие успешно создано в календаре: {result.get('htmlLink', 'N/A')}")
 
-            if service_id != 9:
-                try:
-                    extra_service = await service_repo.get_by_id(9)
-                    extra_name = extra_service.name if extra_service else "Доп. услуга"
-                    extra_start = event_start - timedelta(hours=1)
-                    extra_end = event_start
-                    main_event_id = result.get("id")
-                    main_event_link = result.get("htmlLink")
-                    extra_description = (
-                        f"<b>Доп. услуга</b>\n"
-                        f"Для бронирования: {service_name}\n"
-                        f"Service ID: 9\n"
-                        f"Linked Service ID: {service_id}\n"
-                        f"Связано с событием: {main_event_id or 'неизвестно'}\n"
-                        f"Ссылка на основное событие: {main_event_link or 'неизвестно'}\n"
-                    )
-                    await calendar_service.create_event(
-                        title=f"{extra_name}: {service_name}",
-                        description=extra_description,
-                        start_time=extra_start,
-                        end_time=extra_end
-                    )
-                except Exception as e:
-                    print(f"[CALENDAR] Не удалось создать доп. слот id=9: {e}")
-            
         except Exception as e:
             import traceback
             print(f"[ERROR] Ошибка создания события в календаре: {e}")
@@ -1601,4 +1576,3 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(start_extras_input, F.data.startswith("booking_extras_"))
     dp.callback_query.register(confirm_booking, F.data.startswith("booking_confirm_"))
     dp.callback_query.register(cancel_booking, F.data.startswith("booking_cancel_"))
-

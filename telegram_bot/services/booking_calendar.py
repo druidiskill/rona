@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+﻿from datetime import date, datetime, timedelta
 
 try:
     from google_calendar.calendar_service import GoogleCalendarService
@@ -54,13 +54,8 @@ async def get_time_slots_for_date(
             day_end = datetime.combine(target_date, work_end)
             events = await calendar_service.list_events(day_start, day_end)
 
-            service_tag = f"Service ID: {service_id}"
-            extra_service_tag = "Service ID: 9"
             busy = []
-            busy_extra = []
             for event in events:
-                desc = event.get("description") or ""
-                summary = event.get("summary") or ""
                 start = event.get("start")
                 end = event.get("end")
                 if not start or not end:
@@ -69,12 +64,7 @@ async def get_time_slots_for_date(
                     start = start.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
                 if end.tzinfo is None:
                     end = end.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-
-                if extra_service_tag in desc:
-                    busy_extra.append((start, end))
-                    continue
-                if (service_tag in desc) or (service_name and service_name in summary):
-                    busy.append((start, end))
+                busy.append((start, end))
 
             tz = ZoneInfo(calendar_service.time_zone)
             day_start = datetime.combine(target_date, work_start, tzinfo=tz)
@@ -99,31 +89,14 @@ async def get_time_slots_for_date(
                     cursor += timedelta(minutes=step_minutes)
                 return slots
 
-            if service_id == 9:
-                slots = []
-                for slot_start, slot_end in _generate_slots():
-                    if _overlap_count(slot_start, slot_end, busy) < 2:
-                        slots.append(
-                            {"start_time": slot_start.time(), "end_time": slot_end.time(), "is_available": True}
-                        )
-                return slots, True, None
-
-            def _extra_available(slot_start: datetime) -> bool:
-                pre_start = slot_start - timedelta(hours=1)
-                pre_end = slot_start
-                if pre_start < day_start:
-                    return True
-                return _overlap_count(pre_start, pre_end, busy_extra) < 2
-
             filtered = []
             if all_day:
                 for slot_start, slot_end in _generate_slots():
                     if _overlap_count(slot_start, slot_end, busy) > 0:
                         continue
-                    if _extra_available(slot_start):
-                        filtered.append(
-                            {"start_time": slot_start.time(), "end_time": slot_end.time(), "is_available": True}
-                        )
+                    filtered.append(
+                        {"start_time": slot_start.time(), "end_time": slot_end.time(), "is_available": True}
+                    )
             else:
                 slots = compute_free_slots(
                     busy,
@@ -133,10 +106,9 @@ async def get_time_slots_for_date(
                     step_minutes=step_minutes,
                 )
                 for slot_start, slot_end in slots:
-                    if _extra_available(slot_start):
-                        filtered.append(
-                            {"start_time": slot_start.time(), "end_time": slot_end.time(), "is_available": True}
-                        )
+                    filtered.append(
+                        {"start_time": slot_start.time(), "end_time": slot_end.time(), "is_available": True}
+                    )
             return filtered, True, None
         except Exception as e:
             return build_default_time_slots(duration_minutes, all_day=all_day), False, str(e)
@@ -165,13 +137,8 @@ async def is_booking_available(
             start_time = start_time.replace(tzinfo=tz)
         events = await calendar_service.list_events(day_start, day_end)
 
-        service_tag = f"Service ID: {service_id}"
-        extra_service_tag = "Service ID: 9"
         busy = []
-        busy_extra = []
         for event in events:
-            desc = event.get("description") or ""
-            summary = event.get("summary") or ""
             start = event.get("start")
             end = event.get("end")
             if not start or not end:
@@ -180,12 +147,7 @@ async def is_booking_available(
                 start = start.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
             if end.tzinfo is None:
                 end = end.replace(tzinfo=ZoneInfo(calendar_service.time_zone))
-
-            if extra_service_tag in desc:
-                busy_extra.append((start, end))
-                continue
-            if (service_tag in desc) or (service_name and service_name in summary):
-                busy.append((start, end))
+            busy.append((start, end))
 
         def _overlap_count(start: datetime, end: datetime, intervals: list[tuple[datetime, datetime]]) -> int:
             count = 0
@@ -198,22 +160,9 @@ async def is_booking_available(
         if start_time < day_start or end_time > day_end:
             return False, "Выбранный интервал выходит за пределы рабочего времени."
 
-        if service_id == 9:
-            if _overlap_count(start_time, end_time, busy) >= 2:
-                return False, "Выбранное время пересекается с двумя бронированиями этой услуги."
-            return True, None
-
         if _overlap_count(start_time, end_time, busy) > 0:
-            return False, "Выбранное время пересекается с другой бронью этой услуги."
-
-        pre_start = start_time - timedelta(hours=1)
-        pre_end = start_time
-        if pre_start < day_start:
-            return True, None
-        if _overlap_count(pre_start, pre_end, busy_extra) >= 2:
-            return False, "За час до начала занято обеими бронями доп. услуги."
+            return False, "Выбранное время уже занято другим событием в календаре."
 
         return True, None
     except Exception:
         return True, None
-

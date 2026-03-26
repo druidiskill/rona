@@ -823,26 +823,6 @@ def register_booking_handlers(bot: Bot):
                 )
                 created = True
 
-                if service_id != 9:
-                    try:
-                        extra_service = await service_repo.get_by_id(9)
-                        extra_name = extra_service.name if extra_service else "Доп. услуга"
-                        extra_start = event_start - timedelta(hours=1)
-                        extra_end = event_start
-                        await calendar_service.create_event(
-                            title=f"{extra_name}: {service_name}",
-                            description=(
-                                f"<b>Доп. услуга</b>\n"
-                                f"Для бронирования: {service_name}\n"
-                                f"Service ID: 9\n"
-                                f"Linked Service ID: {service_id}\n"
-                                f"Связано с событием: {result.get('id', 'unknown')}\n"
-                            ),
-                            start_time=extra_start,
-                            end_time=extra_end,
-                        )
-                    except Exception:
-                        pass
             except Exception as e:
                 await message.answer(f"⚠️ Не удалось создать событие в календаре: {e}", keyboard=_get_current_form_keyboard(data))
 
