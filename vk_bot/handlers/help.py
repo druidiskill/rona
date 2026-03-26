@@ -20,7 +20,7 @@ def _faq_keyboard(page: int, total_pages: int, items: list[tuple[int, str]]) -> 
         short_question = question if len(question) <= 37 else f"{question[:34]}..."
         kb.add(
             Text(
-                f"вќ“ {short_question}",
+                f"❓ {short_question}",
                 payload={"a": "faq_open", "id": faq_id, "p": page},
             ),
             color=KeyboardButtonColor.PRIMARY,
@@ -28,22 +28,22 @@ def _faq_keyboard(page: int, total_pages: int, items: list[tuple[int, str]]) -> 
 
     if total_pages > 1:
         if page > 0:
-            kb.add(Text("в¬…пёЏ", payload={"a": "faq_page", "p": page - 1}), color=KeyboardButtonColor.SECONDARY)
+            kb.add(Text("⬅️", payload={"a": "faq_page", "p": page - 1}), color=KeyboardButtonColor.SECONDARY)
         if page < total_pages - 1:
-            kb.add(Text("вћЎпёЏ", payload={"a": "faq_page", "p": page + 1}), color=KeyboardButtonColor.SECONDARY)
+            kb.add(Text("➡️", payload={"a": "faq_page", "p": page + 1}), color=KeyboardButtonColor.SECONDARY)
         kb.row()
 
     kb.add(
-        Text("рџ’¬ РЎРІСЏР·Р°С‚СЊСЃСЏ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј", payload={"a": "faq_contact"}),
+        Text("💬 Связь с админом", payload={"a": "faq_contact"}),
         color=KeyboardButtonColor.POSITIVE,
     ).row()
-    kb.add(Text("рџ”™ РќР°Р·Р°Рґ", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
+    kb.add(Text("🔙 Назад", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 
 def _support_keyboard() -> str:
     kb = Keyboard(one_time=False, inline=False)
-    kb.add(Text("рџ”™ РќР°Р·Р°Рґ", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
+    kb.add(Text("🔙 Назад", payload={"a": "faq_back"}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 
@@ -61,11 +61,11 @@ async def _get_faq_page_data(page: int) -> tuple[list[tuple[int, str]], int, int
 
 async def send_faq_list(message: Message, page: int = 0) -> None:
     items, total_pages, page = await _get_faq_page_data(page)
-    text = "в„№пёЏ Р§Р°СЃС‚Рѕ Р·Р°РґР°РІР°РµРјС‹Рµ РІРѕРїСЂРѕСЃС‹\n\n"
+    text = "ℹ️ Часто задаваемые вопросы\n\n"
     if not items:
-        text += "РЎРїРёСЃРѕРє FAQ РїРѕРєР° РїСѓСЃС‚.\n\nР’С‹ РјРѕР¶РµС‚Рµ СЃРІСЏР·Р°С‚СЊСЃСЏ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј."
+        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
     else:
-        text += "Р’С‹Р±РµСЂРёС‚Рµ РІРѕРїСЂРѕСЃ РєРЅРѕРїРєРѕР№ РЅРёР¶Рµ РёР»Рё РЅР°РїРёС€РёС‚Рµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ."
+        text += "Выберите вопрос кнопкой ниже или напишите администратору."
     await message.answer(text, keyboard=_faq_keyboard(page, total_pages, items))
 
 
@@ -117,7 +117,7 @@ async def forward_question_to_vk_admins(message: Message) -> bool:
 async def _forward_user_to_vk_admins(message: Message) -> None:
     if not (message.text or "").strip():
         await message.answer(
-            "Р’РІРµРґРёС‚Рµ С‚РµРєСЃС‚ РІРѕРїСЂРѕСЃР° РёР»Рё РЅР°Р¶РјРёС‚Рµ В«РќР°Р·Р°РґВ».",
+            "Введите текст вопроса или нажмите «Назад».",
             keyboard=_support_keyboard(),
         )
         return
@@ -125,14 +125,13 @@ async def _forward_user_to_vk_admins(message: Message) -> None:
     forwarded = await forward_question_to_vk_admins(message)
     if not forwarded:
         await message.answer(
-            "РЎРµР№С‡Р°СЃ РЅРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРІ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.",
+            "Сейчас нет доступных администраторов. Попробуйте позже.",
             keyboard=_support_keyboard(),
         )
 
 
-
 def register_help_handlers(bot: Bot) -> None:
-    @bot.on.message(text=["в„№пёЏ РџРѕРјРѕС‰СЊ", "РџРѕРјРѕС‰СЊ", "РїРѕРјРѕС‰СЊ"])
+    @bot.on.message(text=["ℹ️ Помощь", "Помощь", "помощь"])
     async def help_entry(message: Message):
         await send_faq_list(message, page=0)
 
@@ -149,17 +148,17 @@ def register_help_handlers(bot: Bot) -> None:
         entry = await faq_repo.get_by_id(faq_id)
         items, total_pages, current_page = await _get_faq_page_data(page)
         if not entry or not entry.is_active:
-            await message.answer("Р’РѕРїСЂРѕСЃ РЅРµ РЅР°Р№РґРµРЅ.", keyboard=_faq_keyboard(current_page, total_pages, items))
+            await message.answer("Вопрос не найден.", keyboard=_faq_keyboard(current_page, total_pages, items))
             return
 
-        text = f"вќ“ {entry.question}\n\nрџ’Ў {entry.answer}"
+        text = f"❓ {entry.question}\n\n💡 {entry.answer}"
         await message.answer(text, keyboard=_faq_keyboard(current_page, total_pages, items))
 
     @bot.on.message(payload_contains={"a": "faq_contact"})
     async def faq_contact(message: Message):
         await bot.state_dispenser.set(message.peer_id, VkSupportState.user_chat)
         await message.answer(
-            "рџ’¬ РЎРІСЏР·СЊ СЃ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј\n\nР’РІРµРґРёС‚Рµ РІР°С€ РІРѕРїСЂРѕСЃ РѕРґРЅРёРј СЃРѕРѕР±С‰РµРЅРёРµРј.",
+            "💬 Связь с администратором\n\nВведите ваш вопрос одним сообщением.",
             keyboard=_support_keyboard(),
         )
 
@@ -167,7 +166,7 @@ def register_help_handlers(bot: Bot) -> None:
     async def faq_back(message: Message):
         await bot.state_dispenser.delete(message.peer_id)
         await message.answer(
-            "рџЏ  Р“Р»Р°РІРЅРѕРµ РјРµРЅСЋ\n\nР’С‹Р±РµСЂРёС‚Рµ РґРµР№СЃС‚РІРёРµ:",
+            "🏠 Главное меню\n\nВыберите действие:",
             keyboard=get_main_menu_keyboard(),
         )
 
@@ -177,7 +176,7 @@ def register_help_handlers(bot: Bot) -> None:
         if payload.get("a") == "faq_back":
             await bot.state_dispenser.delete(message.peer_id)
             await message.answer(
-                "рџЏ  Р“Р»Р°РІРЅРѕРµ РјРµРЅСЋ\n\nР’С‹Р±РµСЂРёС‚Рµ РґРµР№СЃС‚РІРёРµ:",
+                "🏠 Главное меню\n\nВыберите действие:",
                 keyboard=get_main_menu_keyboard(),
             )
             return
