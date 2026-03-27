@@ -931,6 +931,7 @@ def register_booking_handlers(bot: Bot):
             f"⏰ Продолжительность: {duration} мин.\n"
             f"🎯 Услуга: {service_name}\n"
             + ("📅 Событие создано в календаре\n" if created else "")
+            + "\nДождитесь информацию о предоплате."
         )
         await _clear_state(bot, message)
         await message.answer(
