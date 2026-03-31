@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import TELEGRAM_BOT_TOKEN
-from database import db_manager
+from db import db_manager
 from telegram_bot.handlers import register_handlers
 from telegram_bot.middlewares import register_middlewares
 from telegram_bot.services.booking_reminders import run_booking_reminder_loop, send_telegram_booking_reminders

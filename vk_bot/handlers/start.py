@@ -3,7 +3,7 @@
 from vkbottle.bot import Bot, Message
 
 from config import ADMIN_IDS_VK
-from database import client_service, service_repo
+from db import client_service, service_repo
 from telegram_bot.services.calendar_queries import (
     get_user_calendar_events_by_vk_id,
     is_calendar_available,

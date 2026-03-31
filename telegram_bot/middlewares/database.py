@@ -2,7 +2,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable
 
-from database import db_manager, client_service
+from db import db_manager, client_service
 
 class DatabaseMiddleware(BaseMiddleware):
     """Middleware для работы с базой данных"""

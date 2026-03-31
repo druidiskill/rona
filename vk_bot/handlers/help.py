@@ -6,7 +6,14 @@ from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, Text
 from vkbottle.bot import Bot, Message
 
 from config import VK_GROUP_ID
-from database import admin_repo, faq_repo, support_repo
+from db import admin_repo, faq_repo, support_repo
+from core.support.common import (
+    build_faq_list_text,
+    get_faq_page_data,
+    truncate_question,
+)
+from core.support.use_case import prepare_vk_support_request
+from vk_bot.services.support_notifications import send_support_request_to_vk_admins
 from vk_bot.keyboards import get_main_menu_keyboard
 
 
@@ -17,7 +24,7 @@ class VkSupportState(BaseStateGroup, Enum):
 def _faq_keyboard(page: int, total_pages: int, items: list[tuple[int, str]]) -> str:
     kb = Keyboard(one_time=False, inline=False)
     for faq_id, question in items:
-        short_question = question if len(question) <= 37 else f"{question[:34]}..."
+        short_question = truncate_question(question, max_length=37)
         kb.add(
             Text(
                 f"❓ {short_question}",
@@ -48,70 +55,36 @@ def _support_keyboard() -> str:
 
 
 async def _get_faq_page_data(page: int) -> tuple[list[tuple[int, str]], int, int]:
-    faqs = await faq_repo.get_all_active()
-    page_size = 6
-    total = len(faqs)
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    page = max(0, min(page, total_pages - 1))
-    start = page * page_size
-    end = min(start + page_size, total)
-    items = [(entry.id, entry.question) for entry in faqs[start:end] if entry.id is not None]
-    return items, total_pages, page
+    return await get_faq_page_data(faq_repo=faq_repo, page=page)
 
 
 async def send_faq_list(message: Message, page: int = 0) -> None:
     items, total_pages, page = await _get_faq_page_data(page)
-    text = "ℹ️ Часто задаваемые вопросы\n\n"
-    if not items:
-        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
-    else:
-        text += "Выберите вопрос кнопкой ниже или напишите администратору."
+    text = build_faq_list_text(has_items=bool(items), html_mode=False)
     await message.answer(text, keyboard=_faq_keyboard(page, total_pages, items))
 
 
 async def forward_question_to_vk_admins(message: Message) -> bool:
-    admins = await admin_repo.get_all()
-    active_admins = [admin for admin in admins if admin.is_active and admin.vk_id]
-    if not active_admins:
-        return False
-
-    text = (message.text or "").strip()
-    if not text:
-        return False
-
     user = await message.get_user()
     user_label = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip() or "Пользователь"
     dialog_link = f"https://vk.com/gim{VK_GROUP_ID}/convo/{message.from_id}?entrypoint=list_all"
 
-    await support_repo.add_message(
+    support_request = await prepare_vk_support_request(
+        admin_repo=admin_repo,
+        support_repo=support_repo,
         user_id=message.from_id,
         chat_id=message.peer_id,
         message_id=message.message_id,
-        role="user",
-        text=text,
+        question_text=message.text or "",
+        user_label=user_label,
+        dialog_link=dialog_link,
     )
-
-    admin_text = f"{text}\n{dialog_link}"
-
-    for admin in active_admins:
-        try:
-            sent = await message.ctx_api.messages.send(
-                peer_id=admin.vk_id,
-                random_id=0,
-                message=admin_text,
-            )
-            admin_msg_id = sent[0].conversation_message_id if isinstance(sent, list) else sent
-            await support_repo.add_message(
-                user_id=message.from_id,
-                chat_id=admin.vk_id,
-                message_id=int(admin_msg_id or 0),
-                role="admin_alert",
-                text=f"{user_label}\n{admin_text}",
-            )
-        except Exception as exc:
-            print(f"Не удалось отправить сообщение админу {admin.vk_id}: {exc}")
-
-    return True
+    sent_admin_ids = await send_support_request_to_vk_admins(
+        message=message,
+        admin_ids=support_request.active_admin_ids,
+        admin_text=support_request.admin_text or "",
+    )
+    return bool(sent_admin_ids)
 
 
 async def _forward_user_to_vk_admins(message: Message) -> None:

@@ -7,23 +7,82 @@ from vkbottle import BaseStateGroup, Keyboard, KeyboardButtonColor, PhotoMessage
 from vkbottle.bot import Bot, Message
 
 from config import ADMIN_IDS_VK, TELEGRAM_BOT_TOKEN
-from database import client_repo, service_repo
-from database.models import Client
-from telegram_bot.services.booking_calendar import (
+from core.booking.availability import (
     get_time_slots_for_date as svc_get_time_slots_for_date,
     is_booking_available as svc_is_booking_available,
 )
+from core.booking.common import (
+    format_full_name as core_format_full_name,
+    format_optional_text as core_format_optional_text,
+    normalize_max_guests as core_normalize_max_guests,
+    normalize_min_duration_minutes as core_normalize_min_duration_minutes,
+    normalize_phone10 as core_normalize_phone10,
+)
+from core.booking.admin_notifications import build_vk_booking_admin_notification_for_telegram
+from core.booking.create_booking import (
+    get_or_create_vk_client,
+    sync_vk_booking_client,
+)
+from core.booking.error_texts import (
+    build_comment_validation_error,
+    build_discount_code_validation_error,
+    build_duration_too_small_error,
+    build_email_validation_error,
+    build_guests_validation_error,
+    build_name_validation_error,
+    build_phone_validation_error,
+)
+from core.booking.form_data import build_initial_booking_data, merge_booking_data
+from core.booking.form_config import get_booking_field_label, get_booking_field_status
+from core.booking.form_fields import get_missing_booking_fields
+from core.booking.form_prompts import (
+    build_comment_prompt,
+    build_discount_code_prompt,
+    build_duration_prompt,
+    build_email_prompt,
+    build_last_name_prompt,
+    build_name_prompt,
+    build_phone_prompt,
+)
+from core.booking.form_render import build_booking_form_text
+from core.booking.selection_texts import (
+    build_choose_extras_text,
+    build_choose_guests_text,
+    build_date_selection_text,
+    build_no_slots_text,
+    build_pick_date_first_text,
+    build_time_selection_text,
+)
+from core.booking.presentation import (
+    build_booking_summary,
+    build_vk_calendar_description,
+    build_vk_confirmation_text,
+)
+from core.booking.use_case import create_booking_use_case
+from core.booking.validation import (
+    normalize_and_format_phone,
+    validate_duration_minutes,
+    validate_guests_count,
+    validate_comment,
+    validate_discount_code,
+    validate_optional_email,
+    validate_person_name,
+)
+from core.services.details import build_service_details_text
+from db import client_repo, service_repo
+from db.models import Client
 from telegram_bot.services.booking_formatters import (
     format_booking_date,
     format_booking_time_range,
     format_booking_guests,
     format_extras_display,
 )
+from telegram_bot.services.admin_notifications import send_telegram_admin_notification
 from telegram_bot.utils.photos import list_service_photos
 from vk_bot.keyboards import get_main_menu_keyboard
 
 try:
-    from google_calendar.calendar_service import GoogleCalendarService
+    from calendar_integration.service import GoogleCalendarService
 
     CALENDAR_AVAILABLE = True
 except Exception:
@@ -49,62 +108,15 @@ ADMIN_IDS = _parse_admin_ids(ADMIN_IDS_VK)
 
 
 def _normalize_min_duration_minutes(raw_value: int | None) -> int:
-    min_duration = int(raw_value or 60)
-    if min_duration < 60:
-        min_duration = 60
-    if min_duration % 60 != 0:
-        min_duration = ((min_duration // 60) + 1) * 60
-    return min_duration
+    return core_normalize_min_duration_minutes(raw_value)
 
 
 def _normalize_max_guests(raw_value: int | None) -> int:
-    max_guests = int(raw_value or 1)
-    return max(1, max_guests)
-
-
-def _format_money(value: float | int | None) -> str:
-    amount = float(value or 0)
-    if amount.is_integer():
-        return str(int(amount))
-    return f"{amount:.2f}".rstrip("0").rstrip(".")
+    return core_normalize_max_guests(raw_value)
 
 
 def _build_service_details_text(service) -> str:
-    base_clients = int(service.base_num_clients or service.max_num_clients or 1)
-    max_clients = _normalize_max_guests(service.max_num_clients or base_clients)
-    min_duration = int(service.min_duration_minutes or 60)
-
-    lines = [
-        f"📸 {service.name}",
-        "",
-        (service.description or "").strip(),
-        "",
-        "💰 Цены:",
-        f"• Будни: {_format_money(service.price_min)}₽",
-        f"• Выходные: {_format_money(service.price_min_weekend)}₽",
-        "",
-        "👥 Количество людей:",
-        f"• Входит в стоимость: до {base_clients} чел.",
-        f"• Максимум: {max_clients} чел.",
-    ]
-    if base_clients != max_clients:
-        lines.append(f"• Дополнительно: {_format_money(service.price_for_extra_client)}₽/чел.")
-
-    lines.extend(
-        [
-            "",
-            "⏰ Длительность:",
-            f"• Минимум: {min_duration} мин.",
-            "• Бронирование только полными часами.",
-            "",
-            "📅 Дополнительные услуги:",
-            "• Фотограф: 11 500₽",
-            "• Гримерка: 200/250₽/час",
-            "• Розжиг камина: 400₽",
-            "• Прокат (белый халат и полотенце): 200₽",
-        ]
-    )
-    return "\n".join(lines).strip()
+    return build_service_details_text(service, html=False)
 
 
 def _get_service_details_keyboard(service_id: int) -> str:
@@ -154,12 +166,7 @@ async def _send_service_details(message: Message, service) -> None:
 
 
 def _normalize_phone(phone: str) -> str | None:
-    digits = "".join(ch for ch in str(phone) if ch.isdigit())
-    if len(digits) == 11 and digits.startswith(("7", "8")):
-        digits = digits[1:]
-    if len(digits) != 10:
-        return None
-    return digits
+    return core_normalize_phone10(phone)
 
 
 def _format_phone_display(phone10: str | None) -> str:
@@ -169,15 +176,11 @@ def _format_phone_display(phone10: str | None) -> str:
 
 
 def _format_full_name(data: dict) -> str:
-    first = (data.get("name") or "").strip()
-    last = (data.get("last_name") or "").strip()
-    full = " ".join(part for part in [first, last] if part)
-    return full or "Не указано"
+    return core_format_full_name(data)
 
 
 def _format_optional_value(value: str | None) -> str:
-    text = (value or "").strip()
-    return text or "Не указан"
+    return core_format_optional_text(value)
 
 
 def get_services_booking_keyboard(services: list) -> str:
@@ -198,37 +201,39 @@ def _get_form_keyboard(service_id: int, booking_data: dict) -> str:
     kb = Keyboard(one_time=False, inline=False)
     req_color = lambda ok: KeyboardButtonColor.POSITIVE if ok else KeyboardButtonColor.NEGATIVE
 
-    date_ok = bool(booking_data.get("date"))
-    time_ok = bool(booking_data.get("time"))
-    name_ok = bool(booking_data.get("name"))
-    last_name_ok = bool(booking_data.get("last_name"))
-    phone_ok = bool(booking_data.get("phone"))
-    guests_ok = bool(booking_data.get("guests_count"))
-    email_ok = bool(booking_data.get("email"))
-    discount_ok = bool(booking_data.get("discount_code"))
-    comment_ok = bool(booking_data.get("comment"))
+    status = lambda field: get_booking_field_status(
+        field,
+        booking_data,
+        required_filled="filled",
+        required_empty="empty",
+        optional_filled="filled",
+        optional_empty="empty",
+    )
+    button_color = lambda field: KeyboardButtonColor.PRIMARY if status(field) == "filled" else KeyboardButtonColor.SECONDARY
+    required_color = lambda field: req_color(status(field) == "filled")
+
     duration_set = bool(booking_data.get("duration"))
     extras_set = bool(booking_data.get("extras"))
 
-    kb.add(Text("📅 Дата", payload={"a": "bk_date", "sid": service_id}), color=req_color(date_ok)).row()
-    kb.add(Text("🕒 Время", payload={"a": "bk_time", "sid": service_id}), color=req_color(time_ok)).row()
-    kb.add(Text("👤 Имя", payload={"a": "bk_name", "sid": service_id}), color=req_color(name_ok))
-    kb.add(Text("🧾 Фамилия", payload={"a": "bk_last_name", "sid": service_id}), color=req_color(last_name_ok))
-    kb.add(Text("📱 Телефон", payload={"a": "bk_phone", "sid": service_id}), color=req_color(phone_ok)).row()
-    kb.add(Text("🏷️ Код для скидки", payload={"a": "bk_discount", "sid": service_id}), color=KeyboardButtonColor.PRIMARY if discount_ok else KeyboardButtonColor.SECONDARY)
-    kb.add(Text("💬 Комментарий", payload={"a": "bk_comment", "sid": service_id}), color=KeyboardButtonColor.PRIMARY if comment_ok else KeyboardButtonColor.SECONDARY).row()
-    kb.add(Text("👥 Гости", payload={"a": "bk_guests", "sid": service_id}), color=req_color(guests_ok))
+    kb.add(Text(f"📅 {get_booking_field_label('date')}", payload={"a": "bk_date", "sid": service_id}), color=required_color("date")).row()
+    kb.add(Text(f"🕒 {get_booking_field_label('time')}", payload={"a": "bk_time", "sid": service_id}), color=required_color("time")).row()
+    kb.add(Text(f"👤 {get_booking_field_label('name')}", payload={"a": "bk_name", "sid": service_id}), color=required_color("name"))
+    kb.add(Text(f"🧾 {get_booking_field_label('last_name')}", payload={"a": "bk_last_name", "sid": service_id}), color=required_color("last_name"))
+    kb.add(Text(f"📱 Телефон", payload={"a": "bk_phone", "sid": service_id}), color=required_color("phone")).row()
+    kb.add(Text(f"🏷️ {get_booking_field_label('discount_code')}", payload={"a": "bk_discount", "sid": service_id}), color=button_color("discount_code"))
+    kb.add(Text(f"💬 {get_booking_field_label('comment')}", payload={"a": "bk_comment", "sid": service_id}), color=button_color("comment")).row()
+    kb.add(Text("👥 Гости", payload={"a": "bk_guests", "sid": service_id}), color=required_color("guests_count"))
     kb.add(
-        Text("⏰ Длительность", payload={"a": "bk_duration", "sid": service_id}),
+        Text(f"⏰ {get_booking_field_label('duration')}", payload={"a": "bk_duration", "sid": service_id}),
         color=KeyboardButtonColor.PRIMARY if duration_set else KeyboardButtonColor.SECONDARY,
     ).row()
     kb.add(
-        Text("➕ Доп. услуги", payload={"a": "bk_extras", "sid": service_id}),
+        Text(f"➕ {get_booking_field_label('extras')}", payload={"a": "bk_extras", "sid": service_id}),
         color=KeyboardButtonColor.PRIMARY if extras_set else KeyboardButtonColor.SECONDARY,
     )
     kb.add(
-        Text("📧 E-mail", payload={"a": "bk_email", "sid": service_id}),
-        color=KeyboardButtonColor.PRIMARY if email_ok else KeyboardButtonColor.SECONDARY,
+        Text(f"📧 {get_booking_field_label('email')}", payload={"a": "bk_email", "sid": service_id}),
+        color=button_color("email"),
     ).row()
     kb.add(Text("✅ Подтвердить", payload={"a": "bk_confirm", "sid": service_id}), color=KeyboardButtonColor.POSITIVE).row()
     kb.add(Text("❌ Отменить", payload={"a": "bk_cancel"}), color=KeyboardButtonColor.NEGATIVE)
@@ -374,32 +379,42 @@ async def _show_form(bot: Bot, message: Message, booking_data: dict):
     service_id = int(booking_data["service_id"])
     service_name = booking_data.get("service_name", "")
     duration_minutes = int(booking_data.get("duration") or 60)
-
-    req_mark = lambda ok: "🟢" if ok else "🔴"
-    date_ok = bool(booking_data.get("date"))
-    time_ok = bool(booking_data.get("time"))
-    name_ok = bool(booking_data.get("name"))
-    last_name_ok = bool(booking_data.get("last_name"))
-    phone_ok = bool(booking_data.get("phone"))
-    guests_ok = bool(booking_data.get("guests_count"))
-
-    text = f"📝 Бронирование услуги: {service_name}\n\n"
-    text += "📋 Заполните данные для бронирования:\n\n"
-    text += f"{req_mark(date_ok)} Дата: {format_booking_date(booking_data.get('date'))}\n"
-    text += f"{req_mark(time_ok)} Время: {format_booking_time_range(booking_data.get('time'), duration_minutes)}\n"
-    text += f"{req_mark(name_ok)} Имя: {booking_data.get('name') or 'Не указано'}\n"
-    text += f"{req_mark(last_name_ok)} Фамилия: {booking_data.get('last_name') or 'Не указано'}\n"
-    text += f"{req_mark(phone_ok)} Номер телефона: {booking_data.get('phone') or 'Не указан'}\n"
-    text += f"⚪ Код для скидки: {_format_optional_value(booking_data.get('discount_code'))}\n"
-    text += f"⚪ Комментарий: {_format_optional_value(booking_data.get('comment'))}\n"
-    text += f"{req_mark(guests_ok)} Количество гостей: {format_booking_guests(booking_data.get('guests_count'))}\n"
-    text += f"⚪ Продолжительность: {duration_minutes} мин.\n"
-    text += f"⚪ Доп. услуги: {format_extras_display(booking_data.get('extras', []))}\n"
-    text += f"⚪ E-mail: {booking_data.get('email') or 'Не указан'}\n\n"
-    text += "Выберите параметр:"
+    text = build_booking_form_text(
+        service_name=service_name,
+        date_display=format_booking_date(booking_data.get("date")),
+        time_display=format_booking_time_range(booking_data.get("time"), duration_minutes),
+        name_display=booking_data.get("name") or "Не указано",
+        last_name_display=booking_data.get("last_name") or "Не указано",
+        phone_display=booking_data.get("phone") or "Не указан",
+        discount_code_display=_format_optional_value(booking_data.get("discount_code")),
+        comment_display=_format_optional_value(booking_data.get("comment")),
+        guests_display=format_booking_guests(booking_data.get("guests_count")),
+        duration_display=f"{duration_minutes} мин.",
+        extras_display=format_extras_display(booking_data.get("extras", [])),
+        email_display=booking_data.get("email") or "Не указан",
+        required_mark="⚫",
+        optional_mark="⚪",
+        instruction_text="Выберите параметр:",
+        bold=False,
+    )
+    text = text.replace("⚫ Дата:", ("🟢" if booking_data.get("date") else "🔴") + " Дата:", 1)
+    text = text.replace("⚫ Время:", ("🟢" if booking_data.get("time") else "🔴") + " Время:", 1)
+    text = text.replace("⚫ Имя:", ("🟢" if booking_data.get("name") else "🔴") + " Имя:", 1)
+    text = text.replace("⚫ Фамилия:", ("🟢" if booking_data.get("last_name") else "🔴") + " Фамилия:", 1)
+    text = text.replace("⚫ Номер телефона:", ("🟢" if booking_data.get("phone") else "🔴") + " Номер телефона:", 1)
+    text = text.replace("⚫ Количество гостей:", ("🟢" if booking_data.get("guests_count") else "🔴") + " Количество гостей:", 1)
 
     await _set_state(bot, message, VkBookingState.filling_form, booking_data)
     await message.answer(text, keyboard=_get_form_keyboard(service_id, booking_data))
+
+
+async def _update_booking_data_and_show_form(bot: Bot, message: Message, current_data: dict, **updates) -> None:
+    booking_data = merge_booking_data(
+        current_data,
+        state_service_name=current_data.get("service_name", ""),
+        updates=updates,
+    )
+    await _show_form(bot, message, booking_data)
 
 
 def _get_current_form_keyboard(data: dict) -> str:
@@ -408,11 +423,11 @@ def _get_current_form_keyboard(data: dict) -> str:
 
 
 async def _load_or_create_vk_client(vk_id: int, fallback_name: str | None = None) -> Client:
-    client = await client_repo.get_by_vk_id(vk_id)
-    if client:
-        return client
-    client_id = await client_repo.create(Client(vk_id=vk_id, name=fallback_name or "Пользователь", last_name=""))
-    return await client_repo.get_by_id(client_id)
+    return await get_or_create_vk_client(
+        client_repo=client_repo,
+        vk_id=vk_id,
+        fallback_name=fallback_name,
+    )
 
 
 async def _get_vk_first_name(message: Message) -> str:
@@ -462,23 +477,17 @@ def register_booking_handlers(bot: Bot):
         display_name = client.name if client and client.name and client.name != "Пользователь" else vk_first_name
         display_last_name = client.last_name if client and client.last_name else vk_last_name
         phone_display = _format_phone_display(client.phone) if client and client.phone else None
-        booking_data = {
-            "service_id": service_id,
-            "service_name": service.name,
-            "max_num_clients": _normalize_max_guests(service.max_num_clients),
-            "date": None,
-            "time": None,
-            "name": display_name,
-            "last_name": display_last_name,
-            "phone": phone_display,
-            "discount_code": client.discount_code if client else None,
-            "comment": None,
-            "guests_count": None,
-            "duration": _normalize_min_duration_minutes(service.min_duration_minutes),
-            "is_all_day": False,
-            "extras": [],
-            "email": client.email if client else None,
-        }
+        booking_data = build_initial_booking_data(
+            service_id=service_id,
+            service_name=service.name,
+            max_num_clients=service.max_num_clients,
+            min_duration_minutes=service.min_duration_minutes,
+            name=display_name,
+            last_name=display_last_name,
+            phone=phone_display,
+            email=client.email if client else None,
+            discount_code=client.discount_code if client else None,
+        )
         await _show_form(bot, message, booking_data)
 
     @bot.on.message(payload_contains={"a": "bk_back_form"}, state=VkBookingState.filling_form)
@@ -491,7 +500,7 @@ def register_booking_handlers(bot: Bot):
     async def booking_date(message: Message):
         data = _get_booking_data(message)
         await message.answer(
-            "📅 Выберите дату:",
+            build_date_selection_text(html=False),
             keyboard=_get_date_keyboard(int(data["service_id"]), 0),
         )
 
@@ -500,7 +509,7 @@ def register_booking_handlers(bot: Bot):
         payload = message.get_payload_json() or {}
         sid = int(payload.get("sid"))
         week = int(payload.get("w", 0))
-        await message.answer("📅 Выберите дату:", keyboard=_get_date_keyboard(sid, week))
+        await message.answer(build_date_selection_text(html=False), keyboard=_get_date_keyboard(sid, week))
 
     @bot.on.message(payload_contains={"a": "bk_date_set"}, state=VkBookingState.filling_form)
     async def booking_date_set(message: Message):
@@ -514,7 +523,7 @@ def register_booking_handlers(bot: Bot):
     async def booking_time(message: Message):
         data = _get_booking_data(message)
         if not data.get("date"):
-            await message.answer("Сначала выберите дату.", keyboard=_get_current_form_keyboard(data))
+            await message.answer(build_pick_date_first_text(html=False), keyboard=_get_current_form_keyboard(data))
             return
 
         service_id = int(data["service_id"])
@@ -534,10 +543,10 @@ def register_booking_handlers(bot: Bot):
             for slot in slots
         ]
         if not normalized_slots:
-            await message.answer("На выбранную дату нет свободных слотов.", keyboard=_get_current_form_keyboard(data))
+            await message.answer(build_no_slots_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False), keyboard=_get_current_form_keyboard(data))
             return
         await message.answer(
-            f"🕒 Выберите время на {selected_date.strftime('%d.%m.%Y')}:",
+            build_time_selection_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False),
             keyboard=_get_time_keyboard(service_id, data["date"], normalized_slots, page=0),
         )
 
@@ -549,7 +558,7 @@ def register_booking_handlers(bot: Bot):
         date_value = payload.get("d") or data.get("date")
         page = int(payload.get("p", 0))
         if not date_value:
-            await message.answer("Сначала выберите дату.", keyboard=_get_current_form_keyboard(data))
+            await message.answer(build_pick_date_first_text(html=False), keyboard=_get_current_form_keyboard(data))
             return
 
         service_name = data.get("service_name")
@@ -568,10 +577,10 @@ def register_booking_handlers(bot: Bot):
             for slot in slots
         ]
         if not normalized_slots:
-            await message.answer("На выбранную дату нет свободных слотов.", keyboard=_get_current_form_keyboard(data))
+            await message.answer(build_no_slots_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False), keyboard=_get_current_form_keyboard(data))
             return
         await message.answer(
-            f"🕒 Выберите время на {selected_date.strftime('%d.%m.%Y')}:",
+            build_time_selection_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False),
             keyboard=_get_time_keyboard(service_id, date_value, normalized_slots, page=page),
         )
 
@@ -597,7 +606,7 @@ def register_booking_handlers(bot: Bot):
         service = await service_repo.get_by_id(int(data["service_id"]))
         min_duration = _normalize_min_duration_minutes(service.min_duration_minutes if service else 60)
         await message.answer(
-            "⏰ Выберите продолжительность:",
+            build_duration_prompt(min_duration=min_duration, html=False, detailed=False),
             keyboard=_get_duration_keyboard(int(data["service_id"]), min_duration),
         )
 
@@ -608,8 +617,8 @@ def register_booking_handlers(bot: Bot):
         service = await service_repo.get_by_id(int(data["service_id"]))
         min_duration = _normalize_min_duration_minutes(service.min_duration_minutes if service else 60)
         duration = int(payload.get("m", min_duration))
-        if duration < min_duration:
-            await message.answer(f"Минимальная продолжительность: {min_duration} мин.", keyboard=_get_duration_keyboard(int(data["service_id"]), min_duration))
+        if validate_duration_minutes(duration, min_duration=min_duration) == "too_small":
+            await message.answer(build_duration_too_small_error(min_duration=min_duration, html=False), keyboard=_get_duration_keyboard(int(data["service_id"]), min_duration))
             return
         data["is_all_day"] = duration == 720
         if data["is_all_day"] and data.get("date") and data.get("time"):
@@ -631,7 +640,7 @@ def register_booking_handlers(bot: Bot):
         max_guests = _normalize_max_guests(service.max_num_clients if service else data.get("max_num_clients", 1))
         data["max_num_clients"] = max_guests
         await _set_state(bot, message, VkBookingState.filling_form, data)
-        await message.answer("👥 Выберите количество гостей:", keyboard=_get_guests_keyboard(int(data["service_id"]), max_guests))
+        await message.answer(build_choose_guests_text(html=False), keyboard=_get_guests_keyboard(int(data["service_id"]), max_guests))
 
     @bot.on.message(payload_contains={"a": "bk_guests_set"}, state=VkBookingState.filling_form)
     async def booking_guests_set(message: Message):
@@ -641,8 +650,8 @@ def register_booking_handlers(bot: Bot):
         max_guests = _normalize_max_guests(service.max_num_clients if service else data.get("max_num_clients", 1))
         data["max_num_clients"] = max_guests
         guests_count = int(payload.get("g"))
-        if guests_count > max_guests:
-            await message.answer(f"Максимальная вместимость этой услуги: {max_guests} чел.", keyboard=_get_guests_keyboard(int(data["service_id"]), max_guests))
+        if validate_guests_count(guests_count, max_guests=max_guests) == "too_many":
+            await message.answer(build_guests_validation_error(max_guests=max_guests, html=False), keyboard=_get_guests_keyboard(int(data["service_id"]), max_guests))
             return
         data["guests_count"] = guests_count
         await _show_form(bot, message, data)
@@ -652,7 +661,7 @@ def register_booking_handlers(bot: Bot):
     async def booking_extras(message: Message):
         data = _get_booking_data(message)
         await message.answer(
-            "➕ Выберите дополнительные услуги:",
+            build_choose_extras_text(html=False),
             keyboard=_get_extras_keyboard(int(data["service_id"]), data.get("extras", [])),
         )
 
@@ -666,10 +675,14 @@ def register_booking_handlers(bot: Bot):
             extras.remove(extra)
         else:
             extras.append(extra)
-        data["extras"] = extras
+        data = merge_booking_data(
+            data,
+            state_service_name=data.get("service_name", ""),
+            updates={"extras": extras},
+        )
         await _set_state(bot, message, VkBookingState.filling_form, data)
         await message.answer(
-            "➕ Выберите дополнительные услуги:",
+            build_choose_extras_text(html=False),
             keyboard=_get_extras_keyboard(int(data["service_id"]), extras),
         )
 
@@ -678,33 +691,31 @@ def register_booking_handlers(bot: Bot):
     async def booking_name(message: Message):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_name, data)
-        await message.answer("👤 Введите имя:", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        await message.answer(build_name_prompt(html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
 
     @bot.on.message(state=VkBookingState.entering_name)
     async def booking_name_input(message: Message):
         data = _get_booking_data(message)
-        name = (message.text or "").strip()
-        if len(name) < 2 or not name.replace(" ", "").replace("-", "").isalpha():
-            await message.answer("Имя должно содержать только буквы и быть длиннее 1 символа.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        name, error_code = validate_person_name(message.text or "")
+        if error_code:
+            await message.answer(build_name_validation_error(field_label="Имя", html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        data["name"] = name
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, name=name)
     @bot.on.message(payload_contains={"a": "bk_last_name"}, state=VkBookingState.filling_form)
     @bot.on.message(text="Фамилия", state=VkBookingState.filling_form)
     async def booking_last_name(message: Message):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_last_name, data)
-        await message.answer("🧾 Введите фамилию:", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        await message.answer(build_last_name_prompt(html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
 
     @bot.on.message(state=VkBookingState.entering_last_name)
     async def booking_last_name_input(message: Message):
         data = _get_booking_data(message)
-        last_name = (message.text or "").strip()
-        if len(last_name) < 2 or not last_name.replace(" ", "").replace("-", "").isalpha():
-            await message.answer("Фамилия должна содержать только буквы и быть длиннее 1 символа.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        last_name, error_code = validate_person_name(message.text or "")
+        if error_code:
+            await message.answer(build_name_validation_error(field_label="Фамилия", html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        data["last_name"] = last_name
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, last_name=last_name)
 
 
     @bot.on.message(payload_contains={"a": "bk_phone"}, state=VkBookingState.filling_form)
@@ -712,17 +723,16 @@ def register_booking_handlers(bot: Bot):
     async def booking_phone(message: Message):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_phone, data)
-        await message.answer("📱 Введите телефон (например +7 911 123 45 67):", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        await message.answer(build_phone_prompt(html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
 
     @bot.on.message(state=VkBookingState.entering_phone)
     async def booking_phone_input(message: Message):
         data = _get_booking_data(message)
-        phone10 = _normalize_phone((message.text or "").strip())
-        if not phone10:
-            await message.answer("Некорректный формат телефона. Введите 10 цифр номера.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        formatted_phone = normalize_and_format_phone(message.text or "")
+        if not formatted_phone:
+            await message.answer(build_phone_validation_error(html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        data["phone"] = _format_phone_display(phone10)
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, phone=formatted_phone)
 
     @bot.on.message(payload_contains={"a": "bk_discount"}, state=VkBookingState.filling_form)
     @bot.on.message(text="🏷️ Код для скидки", state=VkBookingState.filling_form)
@@ -730,19 +740,18 @@ def register_booking_handlers(bot: Bot):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_discount_code, data)
         await message.answer(
-            "🏷️ Введите код для скидки.\n\nПоле необязательное. Если код не нужен, нажмите «К форме».",
+            build_discount_code_prompt(html=False, back_label="К форме"),
             keyboard=_get_back_form_keyboard(int(data["service_id"])),
         )
 
     @bot.on.message(state=VkBookingState.entering_discount_code)
     async def booking_discount_input(message: Message):
         data = _get_booking_data(message)
-        discount_code = (message.text or "").strip()
-        if len(discount_code) > 100:
-            await message.answer("Код для скидки не должен превышать 100 символов.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        discount_code, error_code = validate_discount_code(message.text or "")
+        if error_code == "too_long":
+            await message.answer(build_discount_code_validation_error(max_length=100, html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        data["discount_code"] = discount_code
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, discount_code=discount_code)
 
     @bot.on.message(payload_contains={"a": "bk_comment"}, state=VkBookingState.filling_form)
     @bot.on.message(text="💬 Комментарий", state=VkBookingState.filling_form)
@@ -750,55 +759,51 @@ def register_booking_handlers(bot: Bot):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_comment, data)
         await message.answer(
-            "💬 Введите комментарий к бронированию.\n\nПоле необязательное. Если комментарий не нужен, нажмите «К форме».",
+            build_comment_prompt(html=False, back_label="К форме"),
             keyboard=_get_back_form_keyboard(int(data["service_id"])),
         )
 
     @bot.on.message(state=VkBookingState.entering_comment)
     async def booking_comment_input(message: Message):
         data = _get_booking_data(message)
-        comment = (message.text or "").strip()
-        if len(comment) > 500:
-            await message.answer("Комментарий не должен превышать 500 символов.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        comment, error_code = validate_comment(message.text or "")
+        if error_code == "too_long":
+            await message.answer(build_comment_validation_error(max_length=500, html=False), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        data["comment"] = comment
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, comment=comment)
 
     @bot.on.message(payload_contains={"a": "bk_email"}, state=VkBookingState.filling_form)
     @bot.on.message(text="📧 E-mail", state=VkBookingState.filling_form)
     async def booking_email(message: Message):
         data = _get_booking_data(message)
         await _set_state(bot, message, VkBookingState.entering_email, data)
-        await message.answer("📧 Введите e-mail (или '-' чтобы пропустить):", keyboard=_get_back_form_keyboard(int(data["service_id"])))
+        await message.answer(build_email_prompt(html=False, skip_label="-"), keyboard=_get_back_form_keyboard(int(data["service_id"])))
 
     @bot.on.message(state=VkBookingState.entering_email)
     async def booking_email_input(message: Message):
         data = _get_booking_data(message)
-        email = (message.text or "").strip()
-        if email == "-":
-            data["email"] = None
-            await _show_form(bot, message, data)
+        email, error_code = validate_optional_email(message.text or "", skip_tokens={"-"})
+        if error_code == "invalid":
+            await message.answer(build_email_validation_error(html=False, skip_label="-"), keyboard=_get_back_form_keyboard(int(data["service_id"])))
             return
-        if "@" not in email or "." not in email:
-            await message.answer("Некорректный e-mail. Введите корректный адрес или '-' для пропуска.", keyboard=_get_back_form_keyboard(int(data["service_id"])))
-            return
-        data["email"] = email
-        await _show_form(bot, message, data)
+        await _update_booking_data_and_show_form(bot, message, data, email=email)
 
     @bot.on.message(payload_contains={"a": "bk_confirm"}, state=VkBookingState.filling_form)
     @bot.on.message(text="✅ Подтвердить", state=VkBookingState.filling_form)
     async def booking_confirm(message: Message):
         data = _get_booking_data(message)
-        required = ["date", "time", "name", "last_name", "phone", "guests_count"]
-        missing = [k for k in required if not data.get(k)]
+        missing = get_missing_booking_fields(data)
         if missing:
             await message.answer("Не все поля заполнены. Заполните форму до конца.", keyboard=_get_current_form_keyboard(data))
             return
 
         service_id = int(data["service_id"])
         service = await service_repo.get_by_id(service_id)
-        if service and int(data.get("guests_count") or 0) > _normalize_max_guests(service.max_num_clients):
-            await message.answer(f"Максимальная вместимость этой услуги: {_normalize_max_guests(service.max_num_clients)} чел.", keyboard=_get_current_form_keyboard(data))
+        if service and validate_guests_count(
+            int(data.get("guests_count") or 0),
+            max_guests=_normalize_max_guests(service.max_num_clients),
+        ) == "too_many":
+            await message.answer(build_guests_validation_error(max_guests=_normalize_max_guests(service.max_num_clients), html=False), keyboard=_get_current_form_keyboard(data))
             return
         service_name = data.get("service_name", "")
         selected_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
@@ -819,120 +824,62 @@ def register_booking_handlers(bot: Bot):
 
         event_start = start_dt
         event_end = event_start + timedelta(minutes=duration)
+        time_range = f"{event_start.strftime('%H:%M')} - {event_end.strftime('%H:%M')}"
+        preview_summary = build_booking_summary(
+            booking_data=data,
+            service_name=service_name,
+            service_id=service_id,
+            date_display=event_start.strftime('%d.%m.%Y'),
+            time_range=time_range,
+            duration_minutes=duration,
+        )
 
-        created = False
-        if CALENDAR_AVAILABLE and GoogleCalendarService:
-            try:
-                calendar_service = GoogleCalendarService()
-                extras = data.get("extras", [])
-                extras_text = []
-                if "photographer" in extras:
-                    extras_text.append("Фотограф")
-                if "makeuproom" in extras:
-                    extras_text.append("Гримерка")
-                if "fireplace" in extras:
-                    extras_text.append("Розжиг камина")
-                if "rental" in extras:
-                    extras_text.append("Прокат: халат и полотенце")
-                extras_display = ", ".join(extras_text) if extras_text else "Нет"
+        async def _sync_client() -> None:
+            await sync_vk_booking_client(
+                client_repo=client_repo,
+                vk_id=message.from_id,
+                booking_data=data,
+                fallback_name=await _get_vk_first_name(message),
+            )
 
-                event_description = (
-                    f"<b>Кто забронировал</b>\n{_format_full_name(data)}\n"
-                    f"email: {data.get('email') or 'не указан'}\n"
-                    f"{data['phone']}\n"
-                    f"VK ID: {message.from_id}\n\n"
-                    f"<b>Какой зал вы хотите забронировать?</b>\n{service_name}\n\n"
-                    f"Service ID: {service_id}\n\n"
-                    f"<b>Какое количество гостей планируется?</b>\n{data['guests_count']}\n\n"
-                    f"<b>Дополнительные услуги:</b>\n{extras_display}\n\n"
-                    f"<b>Код для скидки:</b>\n{data.get('discount_code') or 'не указан'}\n\n"
-                    f"<b>Комментарий:</b>\n{data.get('comment') or 'не указан'}"
-                )
-                result = await calendar_service.create_event(
-                    title=service_name,
-                    description=event_description,
-                    start_time=event_start,
-                    end_time=event_end,
-                )
-                created = True
-
-            except Exception as e:
-                await message.answer(f"⚠️ Не удалось создать событие в календаре: {e}", keyboard=_get_current_form_keyboard(data))
-
-        # Обновляем клиента в БД
-        client = await _load_or_create_vk_client(message.from_id, fallback_name=await _get_vk_first_name(message))
-        client.name = data["name"]
-        client.last_name = data.get("last_name") or ""
-        client.email = data.get("email")
-        client.discount_code = data.get("discount_code")
-        phone10 = _normalize_phone(data["phone"])
-        if phone10:
-            client.phone = phone10
-        await client_repo.update(client)
+        use_case_result = await create_booking_use_case(
+            booking_data=data,
+            service_name=service_name,
+            service_id=service_id,
+            date_display=event_start.strftime('%d.%m.%Y'),
+            time_range=time_range,
+            duration_minutes=duration,
+            event_start=event_start,
+            event_end=event_end,
+            calendar_available=CALENDAR_AVAILABLE,
+            calendar_service_cls=GoogleCalendarService,
+            calendar_description=build_vk_calendar_description(preview_summary, vk_id=message.from_id),
+            sync_client=_sync_client,
+            admin_notification_builder=lambda summary: build_vk_booking_admin_notification_for_telegram(
+                summary=summary,
+                vk_id=message.from_id,
+            ),
+        )
+        summary = use_case_result.summary
+        notification = use_case_result.admin_notification
+        created = use_case_result.finalize_result.calendar_result.created
+        if use_case_result.finalize_result.calendar_result.error:
+            await message.answer(
+                f"⚠️ Не удалось создать событие в календаре: {use_case_result.finalize_result.calendar_result.error}",
+                keyboard=_get_current_form_keyboard(data),
+            )
 
         # Уведомляем администраторов в Telegram о брони из VK
         try:
-            from aiogram import Bot as TelegramBot
-            from aiogram.enums import ParseMode
-            from database import admin_repo
-
             if TELEGRAM_BOT_TOKEN:
-                tg_bot = TelegramBot(token=TELEGRAM_BOT_TOKEN)
-                extras = data.get("extras", [])
-                extras_labels = {
-                    "photographer": "Фотограф",
-                    "makeuproom": "Гримерка",
-                    "fireplace": "Розжиг камина",
-                    "rental": "Прокат: халат и полотенце",
-                }
-                extras_display = ", ".join(extras_labels.get(e, e) for e in extras) if extras else "Нет"
-
-                time_range = f"{event_start.strftime('%H:%M')} - {event_end.strftime('%H:%M')}"
-                admin_text = (
-                    "📅 <b>Новая бронь (VK)</b>\n\n"
-                    f"📸 Услуга: {service_name}\n"
-                    f"📅 Дата: {event_start.strftime('%d.%m.%Y')}\n"
-                    f"🕒 Время: {time_range}\n"
-                    f"👤 Клиент: {_format_full_name(data)}\n"
-                    f"📱 Телефон: {data['phone']}\n"
-                    f"👥 Гостей: {data['guests_count']}\n"
-                    f"➕ Доп. услуги: {extras_display}\n"
-                    f"🏷️ Код для скидки: {data.get('discount_code') or 'Не указан'}\n"
-                    f"💬 Комментарий: {data.get('comment') or 'Не указан'}\n"
-                    f"VK ID: {message.from_id}\n"
+                await send_telegram_admin_notification(
+                    notification=notification,
+                    bot_token=TELEGRAM_BOT_TOKEN,
                 )
-
-                admins = await admin_repo.get_all()
-                for admin in admins:
-                    if not admin.is_active or not admin.telegram_id:
-                        continue
-                    try:
-                        await tg_bot.send_message(
-                            admin.telegram_id,
-                            admin_text,
-                            parse_mode=ParseMode.HTML,
-                        )
-                    except Exception:
-                        pass
-                await tg_bot.session.close()
         except Exception:
             pass
 
-        time_range = f"{event_start.strftime('%H:%M')} - {event_end.strftime('%H:%M')}"
-        text = (
-            "✅ Бронирование подтверждено!\n\n"
-            f"📅 Дата: {event_start.strftime('%d.%m.%Y')}\n"
-            f"🕒 Время: {time_range}\n"
-            f"👤 Клиент: {_format_full_name(data)}\n"
-            f"📱 Телефон: {data['phone']}\n"
-            f"👥 Гостей: {data['guests_count']}\n"
-            f"🏷️ Код для скидки: {data.get('discount_code') or 'Не указан'}\n"
-            f"💬 Комментарий: {data.get('comment') or 'Не указан'}\n"
-            f"⏰ Продолжительность: {duration} мин.\n"
-            f"🎯 Услуга: {service_name}\n"
-            + ("📅 Событие создано в календаре\n" if created else "")
-            + "\nДождитесь информацию о предоплате."
-        )
+        text = build_vk_confirmation_text(summary, calendar_event_created=created)
         await _clear_state(bot, message)
         await message.answer(
             text,

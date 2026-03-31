@@ -2,7 +2,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable
 
-from database import admin_repo
+from db import admin_repo
 
 class AdminMiddleware(BaseMiddleware):
     """Middleware для проверки прав администратора"""

@@ -1,7 +1,7 @@
-﻿from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state import State, StatesGroup
 
 class BookingStates(StatesGroup):
-    """РЎРѕСЃС‚РѕСЏРЅРёСЏ РїСЂРѕС†РµСЃСЃР° Р±СЂРѕРЅРёСЂРѕРІР°РЅРёСЏ"""
+    """Состояния процесса бронирования."""
     filling_form = State()
     entering_name = State()
     entering_last_name = State()
@@ -15,13 +15,9 @@ class BookingStates(StatesGroup):
     selecting_date = State()
 
 class AdminStates(StatesGroup):
-    """РЎРѕСЃС‚РѕСЏРЅРёСЏ Р°РґРјРёРЅ-РїР°РЅРµР»Рё"""
-    waiting_for_service_name = State()
-    waiting_for_service_description = State()
-    waiting_for_service_price = State()
-    waiting_for_service_duration = State()
-    
-    # РќРѕРІС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РґР»СЏ РґРѕР±Р°РІР»РµРЅРёСЏ СѓСЃР»СѓРі
+    """Состояния админ-панели."""
+
+    # Новые состояния для добавления услуг
     waiting_for_new_service_name = State()
     waiting_for_new_service_description = State()
     waiting_for_new_service_price_weekday = State()
@@ -33,7 +29,7 @@ class AdminStates(StatesGroup):
     waiting_for_new_service_duration = State()
     waiting_for_new_service_photos = State()
     
-    # РЎРѕСЃС‚РѕСЏРЅРёСЏ РґР»СЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃР»СѓРіРё
+    # Состояния для редактирования услуги
     waiting_for_edit_service_name = State()
     waiting_for_edit_service_description = State()
     waiting_for_edit_service_price_weekday = State()
@@ -52,7 +48,6 @@ class AdminStates(StatesGroup):
 
 
 class SupportStates(StatesGroup):
-    """РЎРѕСЃС‚РѕСЏРЅРёСЏ РїРѕРґРґРµСЂР¶РєРё"""
+    """Состояния поддержки."""
     user_chat = State()
     admin_reply = State()
-

@@ -14,10 +14,10 @@ VK_REDIS_STATE_TTL_SECONDS = int(os.getenv("VK_REDIS_STATE_TTL_SECONDS", "86400"
 
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID")
 GOOGLE_CREDENTIALS_FILE = os.getenv(
-    "GOOGLE_CREDENTIALS_FILE", "google_calendar/calendar_properties_primary.json"
+    "GOOGLE_CREDENTIALS_FILE", "calendar_properties_primary.json"
 )
 GOOGLE_TOKEN_FILE = os.getenv(
-    "GOOGLE_TOKEN_FILE", "google_calendar/calendar_properties_primary.json"
+    "GOOGLE_TOKEN_FILE", "calendar_properties_primary.json"
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///photostudio.db")

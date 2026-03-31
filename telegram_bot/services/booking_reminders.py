@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from database import booking_reminder_log_repo, client_repo
+from db import booking_reminder_log_repo, client_repo
 from telegram_bot.services.calendar_queries import list_events
 from telegram_bot.services.contact_utils import extract_booking_contact_details, normalize_phone
 from config import REMINDER_HOUR_MSK
@@ -32,7 +32,7 @@ def _is_primary_booking_event(description: str) -> bool:
     text = description or ""
     if "Linked Service ID:" in text:
         return False
-    if "Service ID: 9" in text and "РЎРІСЏР·Р°РЅРѕ СЃ СЃРѕР±С‹С‚РёРµРј:" in text:
+    if "Service ID: 9" in text and "Связано с событием:" in text:
         return False
     return True
 
@@ -126,7 +126,7 @@ async def collect_tomorrow_reminder_events(channel: str) -> dict[int, list[Remin
                 client_id=client.id,
                 chat_id=chat_id,
                 event_id=event_id,
-                summary=event.get("summary") or "Р‘СЂРѕРЅРёСЂРѕРІР°РЅРёРµ",
+                summary=event.get("summary") or "Бронирование",
                 start=start,
                 end=event.get("end"),
             )
@@ -147,7 +147,7 @@ async def send_telegram_booking_reminders(bot) -> int:
                 text=_build_reminder_text(events),
             )
         except Exception as exc:
-            logger.warning("РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ Telegram-РЅР°РїРѕРјРёРЅР°РЅРёРµ chat_id=%s: %s", events[0].chat_id, exc)
+            logger.warning("Не удалось отправить Telegram-напоминание chat_id=%s: %s", events[0].chat_id, exc)
             continue
 
         for event in events:
@@ -176,7 +176,7 @@ async def send_vk_booking_reminders(bot) -> int:
                 message=_build_reminder_text(events),
             )
         except Exception as exc:
-            logger.warning("РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ VK-РЅР°РїРѕРјРёРЅР°РЅРёРµ peer_id=%s: %s", events[0].chat_id, exc)
+            logger.warning("Не удалось отправить VK-напоминание peer_id=%s: %s", events[0].chat_id, exc)
             continue
 
         for event in events:
@@ -202,7 +202,7 @@ async def run_booking_reminder_loop(sender_name: str, send_callback) -> None:
                 sent_count = await send_callback()
                 logger.info("%s reminders processed for %s events", sender_name, sent_count)
             except Exception:
-                logger.exception("РћС€РёР±РєР° С„РѕРЅРѕРІРѕР№ СЂР°СЃСЃС‹Р»РєРё РЅР°РїРѕРјРёРЅР°РЅРёР№ РґР»СЏ %s", sender_name)
+                logger.exception("Ошибка фоновой рассылки напоминаний для %s", sender_name)
             last_processed_date = now_msk.date()
 
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)

@@ -1,12 +1,12 @@
-﻿from typing import List, Optional
+from typing import List, Optional
 
-from database.database import DatabaseManager
-from database.models import BookingWithDetails, Client
-from database.repositories import BookingRepository, ClientRepository, ServiceRepository
+from .database import DatabaseManager
+from .models import BookingWithDetails, Client
+from .repositories import BookingRepository, ClientRepository, ServiceRepository
 
 
 class ClientService:
-    """Сервис для работы с клиентами."""
+    """Service layer for working with clients."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -22,9 +22,8 @@ class ClientService:
         phone: Optional[str] = None,
         email: Optional[str] = None,
     ) -> Client:
-        """Получение или создание клиента по Telegram ID или VK ID."""
         if telegram_id is None and vk_id is None:
-            raise ValueError("Нужно передать telegram_id или vk_id")
+            raise ValueError("Need telegram_id or vk_id")
 
         client = None
         if telegram_id is not None:
@@ -46,9 +45,6 @@ class ClientService:
         return client
 
     async def get_client_bookings(self, client_id: int) -> List[BookingWithDetails]:
-        """Получение бронирований клиента с деталями."""
-        from datetime import timedelta
-
         bookings = await self.booking_repo.get_by_client_id(client_id)
         booking_details: List[BookingWithDetails] = []
 
@@ -61,9 +57,7 @@ class ClientService:
             if not client:
                 continue
 
-            duration_minutes = booking.num_durations * service.duration_step_minutes
-            end_time = booking.start_time + timedelta(minutes=duration_minutes)
-
+            end_time = booking.get_end_time(service)
             booking_details.append(
                 BookingWithDetails(
                     booking=booking,
@@ -77,10 +71,13 @@ class ClientService:
 
 
 class BookingService:
-    """Сервис для работы с бронированиями."""
+    """Service layer for bookings."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
         self.booking_repo = BookingRepository(db_manager)
         self.service_repo = ServiceRepository(db_manager)
         self.client_repo = ClientRepository(db_manager)
+
+
+__all__ = ["BookingService", "ClientService"]

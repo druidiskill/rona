@@ -10,15 +10,20 @@ from telegram_bot.keyboards import (
     get_clients_management_keyboard, get_admins_management_keyboard
 )
 from telegram_bot.states import SupportStates
-from database import admin_repo, support_repo, faq_repo
-
-FAQ_PAGE_SIZE = 6
+from db import admin_repo, support_repo, faq_repo
+from core.support.common import (
+    build_faq_list_text,
+    get_faq_page_data,
+    truncate_question,
+)
+from core.support.use_case import prepare_telegram_support_request
+from telegram_bot.services.support_notifications import send_support_request_to_telegram_admins
 
 def _build_faq_keyboard(items: list[tuple[int, str]], page: int, total_pages: int) -> InlineKeyboardMarkup:
     keyboard: list[list[InlineKeyboardButton]] = []
 
     for faq_id, question in items:
-        short_question = question if len(question) <= 50 else f"{question[:47]}..."
+        short_question = truncate_question(question, max_length=50)
         keyboard.append([
             InlineKeyboardButton(text=f"❓ {short_question}", callback_data=f"faq_open_{faq_id}_{page}")
         ])
@@ -37,24 +42,12 @@ def _build_faq_keyboard(items: list[tuple[int, str]], page: int, total_pages: in
 
 
 async def _get_faq_page_data(page: int) -> tuple[list[tuple[int, str]], int, int]:
-    faqs = await faq_repo.get_all_active()
-    total = len(faqs)
-    total_pages = max(1, (total + FAQ_PAGE_SIZE - 1) // FAQ_PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    start = page * FAQ_PAGE_SIZE
-    end = min(start + FAQ_PAGE_SIZE, total)
-    items = [(entry.id, entry.question) for entry in faqs[start:end]]
-    return items, total_pages, page
+    return await get_faq_page_data(faq_repo=faq_repo, page=page)
 
 
 async def send_faq_list_message(message: Message, page: int = 0):
     items, total_pages, page = await _get_faq_page_data(page)
-
-    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
-    if not items:
-        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
-    else:
-        text += "Выберите вопрос кнопкой ниже:"
+    text = build_faq_list_text(has_items=bool(items), html_mode=True)
 
     await message.answer(
         text,
@@ -67,11 +60,7 @@ async def help_callback(callback: CallbackQuery, state: FSMContext):
     """Обработчик кнопки помощи: показывает FAQ из БД."""
     await state.clear()
     items, total_pages, page = await _get_faq_page_data(0)
-    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
-    if not items:
-        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
-    else:
-        text += "Выберите вопрос кнопкой ниже:"
+    text = build_faq_list_text(has_items=bool(items), html_mode=True)
 
     await callback.message.edit_text(
         text,
@@ -90,11 +79,7 @@ async def faq_page_callback(callback: CallbackQuery):
         return
 
     items, total_pages, page = await _get_faq_page_data(page)
-    text = "ℹ️ <b>Часто задаваемые вопросы</b>\n\n"
-    if not items:
-        text += "Список FAQ пока пуст.\n\nВы можете связаться с администратором."
-    else:
-        text += "Выберите вопрос кнопкой ниже:"
+    text = build_faq_list_text(has_items=bool(items), html_mode=True)
 
     await callback.message.edit_text(
         text,
@@ -169,9 +154,19 @@ async def faq_contact_callback(callback: CallbackQuery, state: FSMContext):
 
 async def support_user_message(message: Message, state: FSMContext):
     """Сообщение пользователя в поддержку"""
-    admins = await admin_repo.get_all()
-    active_admins = [a for a in admins if a.is_active and a.telegram_id]
-    if not active_admins:
+    support_request = await prepare_telegram_support_request(
+        admin_repo=admin_repo,
+        support_repo=support_repo,
+        user_id=message.from_user.id,
+        chat_id=message.chat.id,
+        message_id=message.message_id,
+        user_full_name=message.from_user.full_name,
+        username=message.from_user.username,
+        text=message.text,
+        caption=message.caption,
+        content_type=message.content_type,
+    )
+    if not support_request.active_admin_ids:
         sent = await message.answer(
             "❌ Сейчас нет доступных администраторов. Попробуйте позже.",
             reply_markup=get_support_menu_keyboard(),
@@ -189,74 +184,14 @@ async def support_user_message(message: Message, state: FSMContext):
             pass
         return
 
-    user = message.from_user
-
-    # Сохраняем сообщение пользователя и строим историю из БД
-    if message.text:
-        history_item = message.text
-    elif message.caption:
-        history_item = message.caption
-    else:
-        history_item = f"[{message.content_type}]"
-
-    await support_repo.add_message(
-        user_id=user.id,
-        chat_id=message.chat.id,
-        message_id=message.message_id,
-        role="user",
-        text=history_item,
+    await send_support_request_to_telegram_admins(
+        bot=message.bot,
+        admin_ids=support_request.active_admin_ids,
+        user_id=message.from_user.id,
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id,
+        header_html=support_request.header_html,
     )
-
-    history_rows = await support_repo.get_last_messages(user.id, limit=6)
-    history_text = ""
-    if history_rows:
-        lines = []
-        for role, text in history_rows:
-            label = "Пользователь" if role == "user" else "Админ"
-            lines.append(f"• {label}: {html.escape(text or '')}")
-        history_text = "\n\n<b>История (последние 6 сообщений):</b>\n" + "\n".join(lines)
-    header = (
-        "🆘 <b>Новый запрос поддержки</b>\n\n"
-        f"👤 Пользователь: {user.full_name}\n"
-        f"🆔 ID: {user.id}\n"
-    )
-    if user.username:
-        header += f"🔗 https://t.me/{user.username}\n"
-    header += history_text
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Ответить", callback_data=f"support_reply_{user.id}")]
-    ])
-
-    for admin in active_admins:
-        try:
-            sent = await message.bot.send_message(
-                admin.telegram_id,
-                header,
-                reply_markup=keyboard,
-                parse_mode="HTML"
-            )
-            await support_repo.add_message(
-                user_id=user.id,
-                chat_id=admin.telegram_id,
-                message_id=sent.message_id,
-                role="admin_alert",
-                text=None,
-            )
-            copied = await message.bot.copy_message(
-                chat_id=admin.telegram_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id
-            )
-            await support_repo.add_message(
-                user_id=user.id,
-                chat_id=admin.telegram_id,
-                message_id=copied.message_id,
-                role="bot",
-                text=None,
-            )
-        except Exception as e:
-            print(f"Не удалось отправить сообщение админу {admin.telegram_id}: {e}")
 
     sent_to_user = await message.answer(
         "✅ Сообщение отправлено администраторам. Мы скоро ответим.",
@@ -264,7 +199,7 @@ async def support_user_message(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await support_repo.add_message(
-        user_id=user.id,
+        user_id=message.from_user.id,
         chat_id=message.chat.id,
         message_id=sent_to_user.message_id,
         role="bot",

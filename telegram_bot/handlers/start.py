@@ -12,7 +12,7 @@ from telegram_bot.keyboards import (
     get_active_booking_actions_keyboard,
 )
 from telegram_bot.states import BookingStates
-from database import client_service, service_repo
+from db import client_service, service_repo
 from telegram_bot.services.calendar_queries import (
     is_calendar_available,
     get_user_calendar_events_by_telegram_id,

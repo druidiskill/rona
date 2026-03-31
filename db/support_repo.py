@@ -1,9 +1,11 @@
-﻿import aiosqlite
-from typing import List, Tuple, Optional
-from database.database import DatabaseManager
+import aiosqlite
+from typing import List, Optional, Tuple
+
+from .database import DatabaseManager
+
 
 class SupportRepository:
-    """Репозиторий для сообщений поддержки"""
+    """Repository for support messages."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -86,3 +88,6 @@ class SupportRepository:
                 (user_id,),
             )
             await db.commit()
+
+
+__all__ = ["SupportRepository"]

@@ -1,26 +1,20 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
-Единый модуль для работы со свободными слотами Google Calendar (FreeBusy).
+Unified module for working with Google Calendar free/busy slots.
+"""
 
-Функции:
-- build_calendar_service
-- get_freebusy
-- merge_busy
-- compute_free_slots
-- get_free_slots_for_date
-- get_busy_slots_for_period
-- book_slot
-"""
-import os
+from __future__ import annotations
+
 import json
-from dotenv import load_dotenv
-from datetime import datetime, timedelta, time
+import os
+from datetime import datetime, time, timedelta
+from typing import Dict, List, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from typing import List, Dict, Tuple
 
+from dotenv import load_dotenv
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
@@ -28,18 +22,14 @@ load_dotenv()
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CREDENTIALS_FILE = os.getenv(
-    "GOOGLE_CREDENTIALS_FILE", "google_calendar/calendar_properties_primary.json"
+    "GOOGLE_CREDENTIALS_FILE", "calendar_properties_primary.json"
 )
 TOKEN_FILE = os.getenv(
-    "GOOGLE_TOKEN_FILE", "google_calendar/calendar_properties_primary.json"
+    "GOOGLE_TOKEN_FILE", "calendar_properties_primary.json"
 )
 
 
 def _load_json_objects(path: str) -> List[dict]:
-    """
-    Загружает один или несколько JSON-объектов из файла.
-    Поддерживает "склеенные" JSON-объекты в одном файле.
-    """
     with open(path, "r", encoding="utf-8-sig") as f:
         raw = f.read().strip()
 
@@ -92,7 +82,6 @@ def _extract_service_account_payload(objs: List[dict]) -> dict | None:
 
 
 def _resolve_token_file() -> str:
-    # Если путь токена совпадает с credentials-файлом, используем sidecar-файл.
     if os.path.abspath(TOKEN_FILE) == os.path.abspath(CREDENTIALS_FILE):
         return f"{TOKEN_FILE}.token.json"
     return TOKEN_FILE
@@ -106,11 +95,9 @@ def _get_tz(time_zone: str) -> ZoneInfo:
 
 
 def build_calendar_service():
-    """Создает Google Calendar API service с OAuth."""
     token_file = _resolve_token_file()
     creds = None
 
-    # 1) Пытаемся загрузить OAuth token из token_file
     if os.path.exists(token_file):
         try:
             creds = Credentials.from_authorized_user_file(token_file, SCOPES)
@@ -120,14 +107,12 @@ def build_calendar_service():
             if token_payload:
                 creds = Credentials.from_authorized_user_info(token_payload, SCOPES)
 
-    # 2) Если token еще нет, пробуем извлечь его прямо из credentials-файла
     if (not creds) and os.path.exists(CREDENTIALS_FILE):
         creds_objs = _load_json_objects(CREDENTIALS_FILE)
         token_payload = _extract_token_payload(creds_objs)
         if token_payload:
             creds = Credentials.from_authorized_user_info(token_payload, SCOPES)
 
-    # 3) Валидация/рефреш OAuth credentials
     if creds and not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -136,7 +121,6 @@ def build_calendar_service():
         else:
             creds = None
 
-    # 4) Если OAuth не поднялся, пробуем interactive OAuth client config
     if not creds and os.path.exists(CREDENTIALS_FILE):
         creds_objs = _load_json_objects(CREDENTIALS_FILE)
         oauth_client_config = _extract_oauth_client_config(creds_objs)
@@ -146,17 +130,14 @@ def build_calendar_service():
             with open(token_file, "w", encoding="utf-8") as token:
                 token.write(creds.to_json())
 
-    # 5) Фолбек на service account
     if not creds and os.path.exists(CREDENTIALS_FILE):
         creds_objs = _load_json_objects(CREDENTIALS_FILE)
         service_account_payload = _extract_service_account_payload(creds_objs)
         if service_account_payload:
             creds = service_account.Credentials.from_service_account_info(
                 service_account_payload,
-                scopes=SCOPES
+                scopes=SCOPES,
             )
-            # На Windows стек google-auth-httplib2 может падать уже на первом refresh().
-            # Предварительно получаем access token через requests-based transport.
             creds.refresh(Request())
 
     if not creds:
@@ -174,7 +155,6 @@ def get_freebusy(
     time_max: datetime,
     time_zone: str = "Europe/Moscow",
 ) -> Dict[str, List[Tuple[datetime, datetime]]]:
-    """Запрашивает занятость (FreeBusy) и возвращает интервалы по календарям."""
     if time_min.tzinfo is None or time_max.tzinfo is None:
         tz = _get_tz(time_zone)
         time_min = time_min.replace(tzinfo=tz)
@@ -202,7 +182,6 @@ def get_freebusy(
 
 
 def merge_busy(busy: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
-    """Сливает пересекающиеся интервалы занятости."""
     if not busy:
         return []
     busy_sorted = sorted(busy, key=lambda x: x[0])
@@ -225,7 +204,6 @@ def compute_free_slots(
     slot_minutes: int = 45,
     step_minutes: int = 45,
 ) -> List[Tuple[datetime, datetime]]:
-    """Возвращает свободные слоты заданной длительности внутри дня."""
     merged = merge_busy(busy)
     free_slots = []
     cursor = day_start
@@ -265,7 +243,6 @@ def get_free_slots_for_date(
     work_end: time = time(hour=21, minute=0),
     time_zone: str = "Europe/Moscow",
 ) -> List[Tuple[datetime, datetime]]:
-    """Свободные слоты на конкретную дату."""
     tz = _get_tz(time_zone)
     day_start = datetime.combine(date_obj, work_start, tzinfo=tz)
     day_end = datetime.combine(date_obj, work_end, tzinfo=tz)
@@ -291,7 +268,6 @@ def get_busy_slots_for_period(
     end: datetime,
     time_zone: str = "Europe/Moscow",
 ) -> Dict[str, List[Tuple[datetime, datetime]]]:
-    """Занятые слоты за период для одного или нескольких календарей."""
     return get_freebusy(service, calendar_ids, start, end, time_zone)
 
 
@@ -304,7 +280,6 @@ def book_slot(
     time_zone: str = "Europe/Moscow",
     description: str = "",
 ) -> dict:
-    """Записывает событие в календарь на указанный слот."""
     if start.tzinfo is None or end.tzinfo is None:
         tz = _get_tz(time_zone)
         start = start.replace(tzinfo=tz)
@@ -318,3 +293,14 @@ def book_slot(
     }
 
     return service.events().insert(calendarId=calendar_id, body=body).execute()
+
+
+__all__ = [
+    "book_slot",
+    "build_calendar_service",
+    "compute_free_slots",
+    "get_busy_slots_for_period",
+    "get_free_slots_for_date",
+    "get_freebusy",
+    "merge_busy",
+]

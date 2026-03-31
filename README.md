@@ -84,21 +84,23 @@ python run_vk_bot.py
 
 ```
 RONA/
-├── database/                 # Работа с базой данных
-│   ├── models.py            # Модели данных
-│   ├── repositories.py      # Репозитории
-│   ├── services.py         # Бизнес-логика
-│   └── database.py         # Инициализация БД
+├── core/                    # Общая бизнес-логика для TG/VK/Web
+├── db/                      # Основной слой работы с SQLite
+├── calendar_integration/    # Основной слой интеграции с Google Calendar
 ├── telegram_bot/           # Telegram бот
 │   ├── handlers/           # Обработчики сообщений
 │   ├── keyboards.py        # Клавиатуры
 │   ├── states.py          # Состояния FSM
 │   └── middlewares/       # Middleware
 ├── vk_bot/                # VK бот
-├── google_calendar/       # Интеграция с календарем
 ├── config.py             # Конфигурация
 └── requirements.txt      # Зависимости
 ```
+
+Основные рабочие пакеты сейчас:
+- `core/`
+- `db/`
+- `calendar_integration/`
 
 ## 🔧 Настройка админов
 

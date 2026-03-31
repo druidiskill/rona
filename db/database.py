@@ -1,6 +1,8 @@
-﻿import aiosqlite
-from config import DATABASE_URL
 import re
+
+import aiosqlite
+
+from config import DATABASE_URL
 
 
 def _resolve_db_path(database_url: str) -> str:
@@ -141,7 +143,6 @@ class DatabaseManager:
             """
         )
 
-        # Backward-compatible migration for existing DBs
         cursor = await db.execute("PRAGMA table_info(services)")
         columns = [row[1] for row in await cursor.fetchall()]
         if "base_num_clients" not in columns:
@@ -244,9 +245,6 @@ class DatabaseManager:
 
         if count[0] == 0:
             services = [
-                # name, description, base_num_clients, max_num_clients, plus_service_ids, price_min,
-                # price_min_weekend, fix_price, price_for_extra_client, price_for_extra_client_weekend,
-                # min_duration_minutes, duration_step_minutes, photo_ids
                 (
                     "Индивидуальная фотосессия",
                     "Профессиональная фотосессия с ретушью",
@@ -326,5 +324,6 @@ class DatabaseManager:
             print("Initial services inserted")
 
 
-# Global DB manager
 db_manager = DatabaseManager()
+
+__all__ = ["DatabaseManager", "db_manager"]

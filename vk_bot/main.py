@@ -6,7 +6,7 @@ from aiohttp import TCPConnector
 from vkbottle import API, AiohttpClient, Bot
 
 from config import REDIS_URL, VK_BOT_TOKEN, VK_REDIS_KEY_PREFIX, VK_REDIS_STATE_TTL_SECONDS
-from database import db_manager
+from db import db_manager
 from telegram_bot.services.booking_reminders import run_booking_reminder_loop, send_vk_booking_reminders
 from vk_bot.handlers import register_handlers
 from vk_bot.state_dispenser import RedisStateDispenser

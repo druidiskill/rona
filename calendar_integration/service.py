@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import os
-from dotenv import load_dotenv
 from datetime import date, datetime, time
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-load_dotenv()
+from dotenv import load_dotenv
 
-from google_calendar.calendar_freebusy import (
-    build_calendar_service,
-    get_free_slots_for_date,
-    book_slot,
-)
+from .freebusy import book_slot, build_calendar_service, get_free_slots_for_date
+
+load_dotenv()
 
 
 class GoogleCalendarService:
@@ -120,3 +117,6 @@ class GoogleCalendarService:
                 }
             )
         return events
+
+
+__all__ = ["GoogleCalendarService"]

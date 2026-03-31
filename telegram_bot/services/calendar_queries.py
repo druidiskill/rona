@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from database import client_repo
+from db import client_repo
 from telegram_bot.services.contact_utils import format_phone_for_search
 
 try:
-    from google_calendar.calendar_service import GoogleCalendarService
+    from calendar_integration.service import GoogleCalendarService
     CALENDAR_AVAILABLE = True
 except Exception:
     GoogleCalendarService = None

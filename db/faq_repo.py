@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
-from database.database import DatabaseManager
+from .database import DatabaseManager
 
 
 @dataclass
@@ -17,7 +17,7 @@ class FaqEntry:
 
 
 class FaqRepository:
-    """Репозиторий FAQ."""
+    """Repository for FAQ entries."""
 
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
@@ -117,3 +117,5 @@ class FaqRepository:
             created_at=datetime.fromisoformat(row[5]) if row[5] else None,
         )
 
+
+__all__ = ["FaqEntry", "FaqRepository"]

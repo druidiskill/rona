@@ -3,7 +3,8 @@ from aiogram.types import CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 from telegram_bot.keyboards import get_service_details_keyboard, get_back_to_service_keyboard
-from database import service_repo
+from core.services.details import build_service_details_text
+from db import service_repo
 from telegram_bot.utils.photos import list_service_photos
 
 async def show_service_details(callback: CallbackQuery, state: FSMContext):
@@ -15,43 +16,7 @@ async def show_service_details(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Услуга не найдена", show_alert=True)
         return
     
-    # Формируем описание услуги
-    description = f"""
-📸 <b>{service.name}</b>
-
-{service.description}
-
-💰 <b>Цены:</b>
-• Будни: {service.price_min}₽
-• Выходные: {service.price_min_weekend}₽
-"""
-
-    if service.id != 9:
-        base_clients = int(service.base_num_clients or service.max_num_clients or 1)
-        max_clients = int(service.max_num_clients or base_clients)
-        description += f"""
-
-👥 <b>Количество людей:</b>
-• Входит в стоимость: до {base_clients} чел.
-• Максимум: {max_clients} чел.
-"""
-        if base_clients != max_clients:
-            description += f"• Дополнительно: {service.price_for_extra_client}₽/чел.\n"
-
-    description += f"""
-
-⏰ <b>Длительность:</b>
-• Минимум: {service.min_duration_minutes} мин.
-• Бронирование только полными часами.
-
-📅 <b>Дополнительные услуги:</b>
-• Фотограф: 11 500₽ (включает аренду зала, работу фотографа и обработанные фото)
-• Гримерка: 200/250₽/час
-• Розжиг камина: 400₽
-• Прокат (белый махровый халат и полотенце): 200₽
-
-<i>Важно: до 9:00 и после 21:00 действует двойная аренда зала и гримерной.</i>
-    """
+    description = build_service_details_text(service, html=True)
     
     photo_files = list_service_photos(service_id)
     if photo_files:
