@@ -84,23 +84,29 @@ python run_vk_bot.py
 
 ```
 RONA/
-├── core/                    # Общая бизнес-логика для TG/VK/Web
-├── db/                      # Основной слой работы с SQLite
-├── calendar_integration/    # Основной слой интеграции с Google Calendar
-├── telegram_bot/           # Telegram бот
-│   ├── handlers/           # Обработчики сообщений
-│   ├── keyboards.py        # Клавиатуры
-│   ├── states.py          # Состояния FSM
-│   └── middlewares/       # Middleware
-├── vk_bot/                # VK бот
-├── config.py             # Конфигурация
-└── requirements.txt      # Зависимости
+├── app/
+│   ├── bootstrap/                 # Настройки, логирование, контейнер, lifecycle
+│   ├── core/
+│   │   └── modules/               # Общая бизнес-логика
+│   ├── entrypoints/               # Точки запуска TG/VK/оба бота
+│   ├── integrations/
+│   │   └── local/                 # SQLite и Google Calendar
+│   ├── media/                     # Медиафайлы услуг
+│   ├── tests/                     # Smoke и архитектурные тесты
+│   └── interfaces/
+│       └── messenger/
+│           ├── tg/                # Telegram transport layer
+│           └── vk/                # VK transport layer
+├── config.py                      # Совместимый слой конфигурации
+└── requirements.txt               # Зависимости
 ```
 
-Основные рабочие пакеты сейчас:
-- `core/`
-- `db/`
-- `calendar_integration/`
+Основной рабочий слой сейчас:
+- `app/core/modules/`
+- `app/integrations/local/`
+- `app/interfaces/messenger/`
+- `app/media/`
+- `app/tests/`
 
 ## 🔧 Настройка админов
 
@@ -134,9 +140,9 @@ INSERT INTO admins (telegram_id, is_active) VALUES (USER_ID, 1);
 
 ### Добавление новых команд:
 
-1. Создайте обработчик в `telegram_bot/handlers/`
-2. Зарегистрируйте в `handlers/__init__.py`
-3. Добавьте клавиатуру в `keyboards.py`
+1. Создайте обработчик в `app/interfaces/messenger/tg/handlers/`
+2. Зарегистрируйте его в `app/interfaces/messenger/tg/handlers/__init__.py`
+3. Добавьте клавиатуру в `app/interfaces/messenger/tg/keyboards.py`
 
 ### Добавление новых услуг:
 

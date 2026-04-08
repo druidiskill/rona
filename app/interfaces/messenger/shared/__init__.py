@@ -1,0 +1,1 @@
+"""Shared messenger adapters placeholder."""

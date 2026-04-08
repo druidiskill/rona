@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -28,4 +30,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
 ADMIN_IDS_TG = os.getenv("ADMIN_IDS_TG", "")
 ADMIN_IDS_VK = os.getenv("ADMIN_IDS_VK", "")
 
-REMINDER_HOUR_MSK = os.getenv("REMINDER_HOUR_MSK")
+REMINDER_HOUR_MSK = int(os.getenv("REMINDER_HOUR_MSK", "10"))
+CALENDAR_CACHE_SYNC_INTERVAL_SECONDS = int(os.getenv("CALENDAR_CACHE_SYNC_INTERVAL_SECONDS", "300"))
+CALENDAR_CACHE_PAST_DAYS = int(os.getenv("CALENDAR_CACHE_PAST_DAYS", "180"))
+CALENDAR_CACHE_FUTURE_DAYS = int(os.getenv("CALENDAR_CACHE_FUTURE_DAYS", "365"))

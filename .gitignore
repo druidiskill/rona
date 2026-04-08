@@ -4,13 +4,12 @@
 *.md
 *.pyc
 /PHOTOS/
-/media/
+/app/media/
 !README.md
 *pyc
 /.venv/
 /venv/
 .env*
-/tests/
 /.tmp_pkgs/
 __pycache__/
 **/__pycache__/
