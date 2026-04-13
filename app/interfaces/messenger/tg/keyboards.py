@@ -2,7 +2,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from typing import List
 from app.integrations.local.db.models import Service, TimeSlot
 from datetime import datetime, timedelta
-from app.core.modules.booking.form_config import get_booking_field_label, get_booking_field_status
+from app.core.modules.booking.form_config import get_booking_field_label
+from app.core.modules.booking.form_fields import get_booking_misc_fields, get_booking_required_menu_fields
 
 def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     """Главное меню."""
@@ -45,31 +46,53 @@ def get_booking_form_keyboard(service_id: int, booking_data: dict = None) -> Inl
     if service_id is None:
         raise ValueError("service_id не может быть None")
 
-    status = lambda field: get_booking_field_status(
-        field,
-        booking_data,
-        required_filled="?",
-        required_empty="?",
-        optional_filled="?",
-        optional_empty="?",
-    )
+    required_fields = set(get_booking_required_menu_fields(booking_data))
+    status = lambda field: "✅" if booking_data.get(field) else "⚪"
 
-    keyboard = [
-        [InlineKeyboardButton(text=f"{status('date')} {get_booking_field_label('date')}", callback_data=f"booking_date_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('time')} {get_booking_field_label('time')}", callback_data=f"booking_time_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('name')} {get_booking_field_label('name')}", callback_data=f"booking_name_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('last_name')} {get_booking_field_label('last_name')}", callback_data=f"booking_last_name_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('phone')} {get_booking_field_label('phone')}", callback_data=f"booking_phone_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('discount_code')} {get_booking_field_label('discount_code')}", callback_data=f"booking_discount_{service_id}")],
-        [InlineKeyboardButton(text=f"{status('comment')} {get_booking_field_label('comment')}", callback_data=f"booking_comment_{service_id}")],
+    date_time_ready = bool(booking_data.get("date") and booking_data.get("time"))
+    date_time_label = "✅ Дата и время" if date_time_ready else "📅 Дата и время"
+
+    keyboard: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text=date_time_label, callback_data=f"booking_date_{service_id}")],
         [InlineKeyboardButton(text=f"{status('guests_count')} Кол-во гостей", callback_data=f"booking_guests_{service_id}")],
-        [InlineKeyboardButton(text=f"⏰ {get_booking_field_label('duration')}", callback_data=f"booking_duration_{service_id}")],
-        [InlineKeyboardButton(text=f"➕ {get_booking_field_label('extras')}", callback_data=f"booking_extras_{service_id}")],
-        [InlineKeyboardButton(text=f"📧 {get_booking_field_label('email')}", callback_data=f"booking_email_{service_id}")],
+        [InlineKeyboardButton(text=f"{status('duration')} {get_booking_field_label('duration')}", callback_data=f"booking_duration_{service_id}")],
+    ]
+
+    for field in ("name", "last_name", "phone", "discount_code"):
+        if field in required_fields:
+            action = "discount" if field == "discount_code" else field
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{status(field)} {get_booking_field_label(field)}",
+                    callback_data=f"booking_{action}_{service_id}",
+                )
+            ])
+
+    if get_booking_misc_fields(booking_data):
+        keyboard.append([InlineKeyboardButton(text="⚙️ Прочее", callback_data=f"booking_other_{service_id}")])
+
+    keyboard.extend([
         [InlineKeyboardButton(text="✅ Подтвердить бронирование", callback_data=f"booking_confirm_{service_id}")],
         [InlineKeyboardButton(text="❌ Отменить", callback_data=f"booking_cancel_{service_id}")],
         [InlineKeyboardButton(text="🔙 Назад к услуге", callback_data=f"service_{service_id}")],
-    ]
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_booking_other_keyboard(service_id: int, booking_data: dict = None) -> InlineKeyboardMarkup:
+    if booking_data is None:
+        booking_data = {}
+
+    keyboard: list[list[InlineKeyboardButton]] = []
+    for field in get_booking_misc_fields(booking_data):
+        action = "discount" if field == "discount_code" else field
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"⚪ {get_booking_field_label(field)}",
+                callback_data=f"booking_{action}_{service_id}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="🔙 К форме", callback_data=f"booking_back_from_other_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 def get_date_selection_keyboard(service_id: int, week_offset: int = 0) -> InlineKeyboardMarkup:
     """Клавиатура выбора даты с перелистыванием"""
@@ -126,10 +149,9 @@ def get_time_selection_keyboard(service_id: int, time_slots: list, selected_date
     # Показываем временные слоты (максимум 12 для полного дня)
     for i, slot in enumerate(time_slots[:12]):  # Показываем до 12 слотов (9:00-21:00)
         start_time = slot['start_time']
-        end_time = slot['end_time']
         is_available = slot['is_available']
         
-        time_str = f"{start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')}"
+        time_str = start_time.strftime('%H:%M')
         status = "✅" if is_available else "❌"
         
         keyboard.append([

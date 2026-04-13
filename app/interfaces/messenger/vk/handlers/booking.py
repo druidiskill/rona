@@ -35,9 +35,9 @@ from app.core.modules.booking.error_texts import (
     build_name_validation_error,
     build_phone_validation_error,
 )
-from app.core.modules.booking.form_data import build_initial_booking_data, merge_booking_data
-from app.core.modules.booking.form_config import get_booking_field_label, get_booking_field_status
-from app.core.modules.booking.form_fields import get_missing_booking_fields
+from app.core.modules.booking.form_data import build_db_prefilled_fields, build_initial_booking_data, merge_booking_data
+from app.core.modules.booking.form_config import get_booking_field_label
+from app.core.modules.booking.form_fields import get_booking_misc_fields, get_booking_required_menu_fields, get_missing_booking_fields
 from app.core.modules.booking.form_prompts import (
     build_comment_prompt,
     build_discount_code_prompt,
@@ -47,7 +47,7 @@ from app.core.modules.booking.form_prompts import (
     build_name_prompt,
     build_phone_prompt,
 )
-from app.core.modules.booking.form_render import build_booking_form_text
+from app.core.modules.booking.form_render import build_booking_form_text, build_booking_other_text
 from app.core.modules.booking.selection_texts import (
     build_choose_extras_text,
     build_choose_guests_text,
@@ -170,45 +170,53 @@ def get_services_booking_keyboard(services: list) -> str:
 
 def _get_form_keyboard(service_id: int, booking_data: dict) -> str:
     kb = Keyboard(one_time=False, inline=False)
-    req_color = lambda ok: KeyboardButtonColor.POSITIVE if ok else KeyboardButtonColor.NEGATIVE
+    required_fields = set(get_booking_required_menu_fields(booking_data))
+    required_color = lambda field: KeyboardButtonColor.POSITIVE if booking_data.get(field) else KeyboardButtonColor.NEGATIVE
 
-    status = lambda field: get_booking_field_status(
-        field,
-        booking_data,
-        required_filled="filled",
-        required_empty="empty",
-        optional_filled="filled",
-        optional_empty="empty",
-    )
-    button_color = lambda field: KeyboardButtonColor.PRIMARY if status(field) == "filled" else KeyboardButtonColor.SECONDARY
-    required_color = lambda field: req_color(status(field) == "filled")
-
-    duration_set = bool(booking_data.get("duration"))
-    extras_set = bool(booking_data.get("extras"))
-
-    kb.add(Text(f"📅 {get_booking_field_label('date')}", payload={"a": "bk_date", "sid": service_id}), color=required_color("date")).row()
-    kb.add(Text(f"🕒 {get_booking_field_label('time')}", payload={"a": "bk_time", "sid": service_id}), color=required_color("time")).row()
-    kb.add(Text(f"👤 {get_booking_field_label('name')}", payload={"a": "bk_name", "sid": service_id}), color=required_color("name"))
-    kb.add(Text(f"🧾 {get_booking_field_label('last_name')}", payload={"a": "bk_last_name", "sid": service_id}), color=required_color("last_name"))
-    kb.add(Text(f"📱 Телефон", payload={"a": "bk_phone", "sid": service_id}), color=required_color("phone")).row()
-    kb.add(Text(f"🏷️ {get_booking_field_label('discount_code')}", payload={"a": "bk_discount", "sid": service_id}), color=button_color("discount_code"))
-    kb.add(Text(f"💬 {get_booking_field_label('comment')}", payload={"a": "bk_comment", "sid": service_id}), color=button_color("comment")).row()
+    date_time_ready = bool(booking_data.get("date") and booking_data.get("time"))
+    kb.add(
+        Text("📅 Дата и время", payload={"a": "bk_date", "sid": service_id}),
+        color=KeyboardButtonColor.POSITIVE if date_time_ready else KeyboardButtonColor.NEGATIVE,
+    ).row()
     kb.add(Text("👥 Гости", payload={"a": "bk_guests", "sid": service_id}), color=required_color("guests_count"))
-    kb.add(
-        Text(f"⏰ {get_booking_field_label('duration')}", payload={"a": "bk_duration", "sid": service_id}),
-        color=KeyboardButtonColor.PRIMARY if duration_set else KeyboardButtonColor.SECONDARY,
-    ).row()
-    kb.add(
-        Text(f"➕ {get_booking_field_label('extras')}", payload={"a": "bk_extras", "sid": service_id}),
-        color=KeyboardButtonColor.PRIMARY if extras_set else KeyboardButtonColor.SECONDARY,
-    )
-    kb.add(
-        Text(f"📧 {get_booking_field_label('email')}", payload={"a": "bk_email", "sid": service_id}),
-        color=button_color("email"),
-    ).row()
+    kb.add(Text(f"⏰ {get_booking_field_label('duration')}", payload={"a": "bk_duration", "sid": service_id}), color=required_color("duration")).row()
+    for field, label, emoji in (
+        ("name", get_booking_field_label("name"), "👤"),
+        ("last_name", get_booking_field_label("last_name"), "🧾"),
+        ("phone", "Телефон", "📱"),
+        ("discount_code", get_booking_field_label("discount_code"), "🏷️"),
+    ):
+        if field not in required_fields:
+            continue
+        action = "discount" if field == "discount_code" else field
+        kb.add(
+            Text(f"{emoji} {label}", payload={"a": f"bk_{action}", "sid": service_id}),
+            color=required_color(field),
+        ).row()
+    if get_booking_misc_fields(booking_data):
+        kb.add(Text("⚙️ Прочее", payload={"a": "bk_other", "sid": service_id}), color=KeyboardButtonColor.SECONDARY).row()
     kb.add(Text("✅ Подтвердить", payload={"a": "bk_confirm", "sid": service_id}), color=KeyboardButtonColor.POSITIVE).row()
     kb.add(Text("❌ Отменить", payload={"a": "bk_cancel"}), color=KeyboardButtonColor.NEGATIVE)
     kb.add(Text("🏠 Главное меню"), color=KeyboardButtonColor.SECONDARY)
+    return kb.get_json()
+
+
+def _get_other_keyboard(service_id: int, booking_data: dict) -> str:
+    kb = Keyboard(one_time=False, inline=False)
+    for field, label, emoji in (
+        ("name", get_booking_field_label("name"), "👤"),
+        ("last_name", get_booking_field_label("last_name"), "🧾"),
+        ("phone", "Телефон", "📱"),
+        ("discount_code", get_booking_field_label("discount_code"), "🏷️"),
+        ("comment", get_booking_field_label("comment"), "💬"),
+        ("extras", get_booking_field_label("extras"), "➕"),
+        ("email", get_booking_field_label("email"), "📧"),
+    ):
+        if field not in get_booking_misc_fields(booking_data):
+            continue
+        action = "discount" if field == "discount_code" else field
+        kb.add(Text(f"{emoji} {label}", payload={"a": f"bk_{action}", "sid": service_id}), color=KeyboardButtonColor.PRIMARY).row()
+    kb.add(Text("↩️ К форме", payload={"a": "bk_back_form", "sid": service_id}), color=KeyboardButtonColor.SECONDARY)
     return kb.get_json()
 
 
@@ -296,11 +304,10 @@ def _get_time_keyboard(service_id: int, date_value: str, slots: list[dict], page
     kb = Keyboard(one_time=False, inline=False)
     for slot in slots[start_idx:end_idx]:
         s = slot["start"]
-        e = slot["end"]
         kb.add(
             Text(
-                f"🕒 {s} - {e}",
-                payload={"a": "bk_time_set", "sid": service_id, "d": date_value, "s": s, "e": e},
+                f"🕒 {s}",
+                payload={"a": "bk_time_set", "sid": service_id, "d": date_value, "s": s, "e": slot["end"]},
             ),
             color=KeyboardButtonColor.PRIMARY,
         ).row()
@@ -367,6 +374,7 @@ async def _show_form(bot: Bot, message: Message, booking_data: dict):
         optional_mark="⚪",
         instruction_text="Выберите параметр:",
         bold=False,
+        db_prefilled_fields=booking_data.get("db_prefilled_fields", []),
     )
     text = text.replace("⚫ Дата:", ("🟢" if booking_data.get("date") else "🔴") + " Дата:", 1)
     text = text.replace("⚫ Время:", ("🟢" if booking_data.get("time") else "🔴") + " Время:", 1)
@@ -377,6 +385,55 @@ async def _show_form(bot: Bot, message: Message, booking_data: dict):
 
     await _set_state(bot, message, VkBookingState.filling_form, booking_data)
     await message.answer(text, keyboard=_get_form_keyboard(service_id, booking_data))
+
+
+def _build_other_text(booking_data: dict) -> str:
+    return build_booking_other_text(
+        service_name=booking_data.get("service_name", ""),
+        name_display=booking_data.get("name") or "Не указано",
+        last_name_display=booking_data.get("last_name") or "Не указано",
+        phone_display=booking_data.get("phone") or "Не указан",
+        discount_code_display=_format_optional_value(booking_data.get("discount_code")),
+        comment_display=_format_optional_value(booking_data.get("comment")),
+        extras_display=format_extras_display(booking_data.get("extras", [])),
+        email_display=booking_data.get("email") or "Не указан",
+        optional_mark="⚪",
+        instruction_text="Выберите параметр:",
+        bold=False,
+        db_prefilled_fields=booking_data.get("db_prefilled_fields", []),
+    )
+
+
+async def _show_time_selection_screen(bot: Bot, message: Message, data: dict, date_value: str, page: int = 0) -> None:
+    service_id = int(data["service_id"])
+    data["date"] = date_value
+    await _set_state(bot, message, VkBookingState.filling_form, data)
+
+    service_name = data.get("service_name")
+    selected_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+    duration = int(data.get("duration") or 60)
+    is_all_day = bool(data.get("is_all_day"))
+    slots, _, _ = await svc_get_time_slots_for_date(
+        target_date=selected_date,
+        service_id=service_id,
+        service_name=service_name,
+        duration_minutes=duration,
+        all_day=is_all_day,
+    )
+    normalized_slots = [
+        {"start": slot["start_time"].strftime("%H:%M"), "end": slot["end_time"].strftime("%H:%M")}
+        for slot in slots
+    ]
+    if not normalized_slots:
+        await message.answer(
+            build_no_slots_text(date_display=selected_date.strftime("%d.%m.%Y"), html=False),
+            keyboard=_get_current_form_keyboard(data),
+        )
+        return
+    await message.answer(
+        build_time_selection_text(date_display=selected_date.strftime("%d.%m.%Y"), html=False),
+        keyboard=_get_time_keyboard(service_id, date_value, normalized_slots, page=page),
+    )
 
 
 async def _update_booking_data_and_show_form(bot: Bot, message: Message, current_data: dict, **updates) -> None:
@@ -458,6 +515,12 @@ def register_booking_handlers(bot: Bot):
             phone=phone_display,
             email=client.email if client else None,
             discount_code=client.discount_code if client else None,
+            db_prefilled_fields=build_db_prefilled_fields(
+                name=(client.name if client and client.name != "Пользователь" else None),
+                last_name=client.last_name if client else None,
+                phone=client.phone if client else None,
+                discount_code=client.discount_code if client else None,
+            ),
         )
         await _show_form(bot, message, booking_data)
 
@@ -466,8 +529,13 @@ def register_booking_handlers(bot: Bot):
     async def booking_back_form(message: Message):
         await _show_form(bot, message, _get_booking_data(message))
 
+    @bot.on.message(payload_contains={"a": "bk_other"}, state=VkBookingState.filling_form)
+    async def booking_other(message: Message):
+        data = _get_booking_data(message)
+        await message.answer(_build_other_text(data), keyboard=_get_other_keyboard(int(data["service_id"]), data))
+
     @bot.on.message(payload_contains={"a": "bk_date"}, state=VkBookingState.filling_form)
-    @bot.on.message(text="📅 Дата", state=VkBookingState.filling_form)
+    @bot.on.message(text="📅 Дата и время", state=VkBookingState.filling_form)
     async def booking_date(message: Message):
         data = _get_booking_data(message)
         await message.answer(
@@ -486,8 +554,7 @@ def register_booking_handlers(bot: Bot):
     async def booking_date_set(message: Message):
         payload = message.get_payload_json() or {}
         data = _get_booking_data(message)
-        data["date"] = payload.get("d")
-        await _show_form(bot, message, data)
+        await _show_time_selection_screen(bot, message, data, payload.get("d"), page=0)
 
     @bot.on.message(payload_contains={"a": "bk_time"}, state=VkBookingState.filling_form)
     @bot.on.message(text="🕒 Время", state=VkBookingState.filling_form)
@@ -496,64 +563,18 @@ def register_booking_handlers(bot: Bot):
         if not data.get("date"):
             await message.answer(build_pick_date_first_text(html=False), keyboard=_get_current_form_keyboard(data))
             return
-
-        service_id = int(data["service_id"])
-        service_name = data.get("service_name")
-        selected_date = datetime.strptime(data["date"], "%Y-%m-%d").date()
-        duration = int(data.get("duration") or 60)
-        is_all_day = bool(data.get("is_all_day"))
-        slots, _, _ = await svc_get_time_slots_for_date(
-            target_date=selected_date,
-            service_id=service_id,
-            service_name=service_name,
-            duration_minutes=duration,
-            all_day=is_all_day,
-        )
-        normalized_slots = [
-            {"start": slot["start_time"].strftime("%H:%M"), "end": slot["end_time"].strftime("%H:%M")}
-            for slot in slots
-        ]
-        if not normalized_slots:
-            await message.answer(build_no_slots_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False), keyboard=_get_current_form_keyboard(data))
-            return
-        await message.answer(
-            build_time_selection_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False),
-            keyboard=_get_time_keyboard(service_id, data["date"], normalized_slots, page=0),
-        )
+        await _show_time_selection_screen(bot, message, data, data["date"], page=0)
 
     @bot.on.message(payload_contains={"a": "bk_time_page"}, state=VkBookingState.filling_form)
     async def booking_time_page(message: Message):
         payload = message.get_payload_json() or {}
         data = _get_booking_data(message)
-        service_id = int(payload.get("sid"))
         date_value = payload.get("d") or data.get("date")
         page = int(payload.get("p", 0))
         if not date_value:
             await message.answer(build_pick_date_first_text(html=False), keyboard=_get_current_form_keyboard(data))
             return
-
-        service_name = data.get("service_name")
-        selected_date = datetime.strptime(date_value, "%Y-%m-%d").date()
-        duration = int(data.get("duration") or 60)
-        is_all_day = bool(data.get("is_all_day"))
-        slots, _, _ = await svc_get_time_slots_for_date(
-            target_date=selected_date,
-            service_id=service_id,
-            service_name=service_name,
-            duration_minutes=duration,
-            all_day=is_all_day,
-        )
-        normalized_slots = [
-            {"start": slot["start_time"].strftime("%H:%M"), "end": slot["end_time"].strftime("%H:%M")}
-            for slot in slots
-        ]
-        if not normalized_slots:
-            await message.answer(build_no_slots_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False), keyboard=_get_current_form_keyboard(data))
-            return
-        await message.answer(
-            build_time_selection_text(date_display=selected_date.strftime('%d.%m.%Y'), html=False),
-            keyboard=_get_time_keyboard(service_id, date_value, normalized_slots, page=page),
-        )
+        await _show_time_selection_screen(bot, message, data, date_value, page=page)
 
     @bot.on.message(payload_contains={"a": "bk_time_set"}, state=VkBookingState.filling_form)
     async def booking_time_set(message: Message):

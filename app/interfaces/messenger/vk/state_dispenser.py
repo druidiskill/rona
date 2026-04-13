@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Optional
 
 from redis.asyncio import Redis
@@ -42,3 +43,38 @@ class RedisStateDispenser(ABCStateDispenser):
 
     async def healthcheck(self) -> bool:
         return bool(await self._redis.ping())
+
+
+class MemoryStateDispenser(ABCStateDispenser):
+    def __init__(self, ttl_seconds: int = 86400):
+        self._ttl_seconds = ttl_seconds
+        self._storage: dict[int, tuple[float, str, dict]] = {}
+
+    def _prune_expired(self, peer_id: int) -> None:
+        record = self._storage.get(peer_id)
+        if not record:
+            return
+        expires_at, _state, _payload = record
+        if expires_at < time.time():
+            self._storage.pop(peer_id, None)
+
+    async def get(self, peer_id: int) -> Optional[StatePeer]:
+        self._prune_expired(peer_id)
+        record = self._storage.get(peer_id)
+        if not record:
+            return None
+        _expires_at, state, payload = record
+        return StatePeer(peer_id=peer_id, state=state, payload=payload)
+
+    async def set(self, peer_id: int, state: BaseStateGroup, **payload):
+        expires_at = time.time() + self._ttl_seconds
+        self._storage[peer_id] = (expires_at, str(state), payload)
+
+    async def delete(self, peer_id: int):
+        self._storage.pop(peer_id, None)
+
+    async def close(self):
+        self._storage.clear()
+
+    async def healthcheck(self) -> bool:
+        return True

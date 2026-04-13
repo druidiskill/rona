@@ -12,6 +12,7 @@ def build_initial_booking_data(
     phone: str | None = None,
     email: str | None = None,
     discount_code: str | None = None,
+    db_prefilled_fields: list[str] | None = None,
 ) -> dict:
     return {
         "service_id": service_id,
@@ -29,6 +30,7 @@ def build_initial_booking_data(
         "is_all_day": False,
         "extras": [],
         "email": email,
+        "db_prefilled_fields": list(db_prefilled_fields or []),
     }
 
 
@@ -49,3 +51,22 @@ def merge_booking_data(
 def resolve_booking_service_name(state_data: dict, booking_data: dict | None = None) -> str:
     data = booking_data or state_data.get("booking_data", {})
     return data.get("service_name") or state_data.get("service_name", "")
+
+
+def build_db_prefilled_fields(
+    *,
+    name: str | None = None,
+    last_name: str | None = None,
+    phone: str | None = None,
+    discount_code: str | None = None,
+) -> list[str]:
+    fields: list[str] = []
+    if name:
+        fields.append("name")
+    if last_name:
+        fields.append("last_name")
+    if phone:
+        fields.append("phone")
+    if discount_code:
+        fields.append("discount_code")
+    return fields

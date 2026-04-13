@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, date
 
 from app.interfaces.messenger.tg.keyboards import (
     get_booking_form_keyboard,
+    get_booking_other_keyboard,
     get_main_menu_keyboard,
     get_date_selection_keyboard,
     get_time_selection_keyboard,
@@ -42,6 +43,7 @@ from app.core.modules.booking.error_texts import (
     build_phone_validation_error,
 )
 from app.core.modules.booking.form_data import (
+    build_db_prefilled_fields,
     build_initial_booking_data,
     merge_booking_data,
     resolve_booking_service_name,
@@ -57,7 +59,7 @@ from app.core.modules.booking.form_prompts import (
     build_name_prompt,
     build_phone_prompt,
 )
-from app.core.modules.booking.form_render import build_booking_form_text
+from app.core.modules.booking.form_render import build_booking_form_text, build_booking_other_text
 from app.core.modules.booking.selection_texts import (
     build_choose_extras_text,
     build_date_selection_text,
@@ -218,6 +220,28 @@ def _build_booking_form_text(service_name: str, booking_data: dict, state_data: 
         duration_mark="⏰",
         extras_mark="➕",
         email_mark="📧",
+        db_prefilled_fields=booking_data.get("db_prefilled_fields", []),
+    )
+
+
+def _build_booking_other_menu_text(service_name: str, booking_data: dict) -> str:
+    return build_booking_other_text(
+        service_name=service_name,
+        name_display=booking_data.get("name") or "Не указано",
+        last_name_display=booking_data.get("last_name") or "Не указано",
+        phone_display=booking_data.get("phone") or "Не указан",
+        discount_code_display=_format_optional_booking_value(booking_data.get("discount_code")),
+        comment_display=_format_optional_booking_value(booking_data.get("comment")),
+        extras_display=_format_extras_display(booking_data.get("extras", [])),
+        email_display=booking_data.get("email") or "Не указан",
+        optional_mark="⚪",
+        instruction_text="Выберите параметр для заполнения:",
+        bold=True,
+        discount_code_mark="🏷️",
+        comment_mark="💬",
+        extras_mark="➕",
+        email_mark="📧",
+        db_prefilled_fields=booking_data.get("db_prefilled_fields", []),
     )
 
 
@@ -279,6 +303,12 @@ async def start_booking(callback: CallbackQuery, state: FSMContext):
             phone=phone_display,
             email=existing_client.email,
             discount_code=getattr(existing_client, "discount_code", None),
+            db_prefilled_fields=build_db_prefilled_fields(
+                name=existing_client.name,
+                last_name=getattr(existing_client, "last_name", None),
+                phone=normalized_phone,
+                discount_code=getattr(existing_client, "discount_code", None),
+            ),
         )
         await state.update_data(
             service_id=service_id,
@@ -334,6 +364,65 @@ async def show_booking_form(callback: CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
 
+
+async def _show_time_selection_for_date(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    service_id: int,
+    selected_date: str,
+) -> None:
+    data = await state.get_data()
+    booking_data = data.get("booking_data", {})
+    booking_data["date"] = selected_date
+    if "service_name" not in booking_data:
+        booking_data["service_name"] = data.get("service_name", "")
+    await state.update_data(booking_data=booking_data)
+
+    try:
+        selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
+        service_name = booking_data.get("service_name") or data.get("service_name")
+        duration_minutes = booking_data.get("duration") or _get_min_duration_from_state(data)
+        is_all_day = bool(booking_data.get("is_all_day"))
+        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
+            selected_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
+        )
+
+        if not time_slots and used_calendar:
+            await callback.message.edit_text(
+                build_no_slots_text(date_display=selected_date_obj.strftime("%d.%m.%Y"), html=True),
+                reply_markup=get_booking_form_keyboard(service_id, booking_data),
+                parse_mode="HTML",
+            )
+            return
+
+        if calendar_error:
+            await callback.answer("Не удалось получить данные календаря. Показаны резервные слоты.")
+
+        await state.update_data(time_slots=time_slots)
+        duration_hint = build_duration_hint(
+            is_all_day=is_all_day,
+            min_duration=int(_get_min_duration_from_state(data)),
+            selected_duration=duration_minutes,
+        )
+        await callback.message.edit_text(
+            build_time_selection_text(
+                date_display=selected_date_obj.strftime("%d.%m.%Y"),
+                html=True,
+                duration_hint=duration_hint,
+            ),
+            reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        print(f"Ошибка выбора времени: {e}")
+        await callback.message.edit_text(
+            "⚠️ <b>Не удалось получить доступные слоты</b>\n\n"
+            "Пожалуйста, попробуйте позже или выберите другую дату.",
+            reply_markup=get_booking_form_keyboard(service_id, booking_data),
+            parse_mode="HTML",
+        )
+
 async def select_date(callback: CallbackQuery, state: FSMContext):
     """Выбор даты бронирования."""
     parts = callback.data.split("_")
@@ -372,49 +461,12 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
         await callback.answer(build_pick_date_first_text(html=True), show_alert=True)
         return
     
-    try:
-        selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
-        service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
-        is_all_day = bool(booking_data.get('is_all_day'))
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
-            selected_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
-        )
-
-        if not time_slots and used_calendar:
-            await callback.message.edit_text(
-                build_no_slots_text(date_display=selected_date_obj.strftime('%d.%m.%Y'), html=True),
-                reply_markup=get_booking_form_keyboard(service_id, booking_data),
-                parse_mode="HTML"
-            )
-            return
-
-        if calendar_error:
-            await callback.answer("Не удалось получить данные календаря. Показаны резервные слоты.")
-
-        await state.update_data(time_slots=time_slots)
-        duration_hint = build_duration_hint(
-            is_all_day=is_all_day,
-            min_duration=int(_get_min_duration_from_state(data)),
-            selected_duration=duration_minutes,
-        )
-        await callback.message.edit_text(
-            build_time_selection_text(
-                date_display=selected_date_obj.strftime('%d.%m.%Y'),
-                html=True,
-                duration_hint=duration_hint,
-            ),
-            reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        print(f"Ошибка выбора времени: {e}")
-        await callback.message.edit_text(
-            "⚠️ <b>Не удалось получить доступные слоты</b>\n\n"
-            "Пожалуйста, попробуйте позже или выберите другую дату.",
-            reply_markup=get_booking_form_keyboard(service_id, booking_data),
-            parse_mode="HTML"
-        )
+    await _show_time_selection_for_date(
+        callback,
+        state,
+        service_id=service_id,
+        selected_date=selected_date,
+    )
 
 async def date_prev_week(callback: CallbackQuery, state: FSMContext):
     """Переключение на предыдущую неделю."""
@@ -445,15 +497,13 @@ async def confirm_date_selection(callback: CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     service_id = int(parts[2])
     selected_date = parts[3]  # YYYY-MM-DD format
-    
-    data = await state.get_data()
-    booking_data = data.get('booking_data', {})
-    booking_data['date'] = selected_date
-    if 'service_name' not in booking_data:
-        booking_data['service_name'] = data.get('service_name', '')
-    await state.update_data(booking_data=booking_data)
-    
-    await show_booking_form(callback, state)
+
+    await _show_time_selection_for_date(
+        callback,
+        state,
+        service_id=service_id,
+        selected_date=selected_date,
+    )
 
 async def time_prev_date(callback: CallbackQuery, state: FSMContext):
     """Сдвиг выбора времени на предыдущую дату."""
@@ -461,58 +511,12 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
     service_id = int(parts[3])
     prev_date = parts[4]  # YYYY-MM-DD format
     
-    # ��������� ��������� ���� � ���������
-    data = await state.get_data()
-    booking_data = data.get('booking_data', {})
-    booking_data['date'] = prev_date
-    # ��������� service_name ���� ��� ��� ��� � booking_data
-    if 'service_name' not in booking_data:
-        booking_data['service_name'] = data.get('service_name', '')
-    await state.update_data(booking_data=booking_data)
-    
-    try:
-        prev_date_obj = datetime.strptime(prev_date, "%Y-%m-%d").date()
-        service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
-        is_all_day = bool(booking_data.get('is_all_day'))
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
-            prev_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
-        )
-
-        if not time_slots and used_calendar:
-            await callback.message.edit_text(
-                build_no_slots_text(date_display=prev_date_obj.strftime('%d.%m.%Y'), html=True),
-                reply_markup=get_booking_form_keyboard(service_id, booking_data),
-                parse_mode="HTML"
-            )
-            return
-
-        if calendar_error:
-            await callback.answer("Не удалось получить данные календаря. Показаны резервные слоты.")
-
-        await state.update_data(time_slots=time_slots)
-        duration_hint = build_duration_hint(
-            is_all_day=is_all_day,
-            min_duration=int(_get_min_duration_from_state(data)),
-            selected_duration=duration_minutes,
-        )
-        await callback.message.edit_text(
-            build_time_selection_text(
-                date_display=prev_date_obj.strftime('%d.%m.%Y'),
-                html=True,
-                duration_hint=duration_hint,
-            ),
-            reply_markup=get_time_selection_keyboard(service_id, time_slots, prev_date),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        print(f"Ошибка получения слотов для предыдущей даты: {e}")
-        await callback.message.edit_text(
-            "⚠️ <b>Не удалось получить доступные слоты</b>\n\n"
-            "Пожалуйста, попробуйте позже или выберите другую дату.",
-            reply_markup=get_booking_form_keyboard(service_id, booking_data),
-            parse_mode="HTML"
-        )
+    await _show_time_selection_for_date(
+        callback,
+        state,
+        service_id=service_id,
+        selected_date=prev_date,
+    )
 
 async def time_next_date(callback: CallbackQuery, state: FSMContext):
     """Сдвиг выбора времени на следующую дату."""
@@ -520,58 +524,12 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
     service_id = int(parts[3])
     next_date = parts[4]  # YYYY-MM-DD format
     
-    # ��������� ��������� ���� � ���������
-    data = await state.get_data()
-    booking_data = data.get('booking_data', {})
-    booking_data['date'] = next_date
-    # ��������� service_name ���� ��� ��� ��� � booking_data
-    if 'service_name' not in booking_data:
-        booking_data['service_name'] = data.get('service_name', '')
-    await state.update_data(booking_data=booking_data)
-    
-    try:
-        next_date_obj = datetime.strptime(next_date, "%Y-%m-%d").date()
-        service_name = booking_data.get('service_name') or data.get('service_name')
-        duration_minutes = booking_data.get('duration') or _get_min_duration_from_state(data)
-        is_all_day = bool(booking_data.get('is_all_day'))
-        time_slots, used_calendar, calendar_error = await _get_time_slots_for_date(
-            next_date_obj, service_id, service_name, duration_minutes, all_day=is_all_day
-        )
-
-        if not time_slots and used_calendar:
-            await callback.message.edit_text(
-                build_no_slots_text(date_display=next_date_obj.strftime('%d.%m.%Y'), html=True),
-                reply_markup=get_booking_form_keyboard(service_id, booking_data),
-                parse_mode="HTML"
-            )
-            return
-
-        if calendar_error:
-            await callback.answer("Не удалось получить данные календаря. Показаны резервные слоты.")
-
-        await state.update_data(time_slots=time_slots)
-        duration_hint = build_duration_hint(
-            is_all_day=is_all_day,
-            min_duration=int(_get_min_duration_from_state(data)),
-            selected_duration=duration_minutes,
-        )
-        await callback.message.edit_text(
-            build_time_selection_text(
-                date_display=next_date_obj.strftime('%d.%m.%Y'),
-                html=True,
-                duration_hint=duration_hint,
-            ),
-            reply_markup=get_time_selection_keyboard(service_id, time_slots, next_date),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        print(f"Ошибка получения слотов для следующей даты: {e}")
-        await callback.message.edit_text(
-            "⚠️ <b>Не удалось получить доступные слоты</b>\n\n"
-            "Пожалуйста, попробуйте позже или выберите другую дату.",
-            reply_markup=get_booking_form_keyboard(service_id, booking_data),
-            parse_mode="HTML"
-        )
+    await _show_time_selection_for_date(
+        callback,
+        state,
+        service_id=service_id,
+        selected_date=next_date,
+    )
 
 async def confirm_time_selection(callback: CallbackQuery, state: FSMContext):
     """Подтверждение выбранного времени."""
@@ -621,6 +579,21 @@ async def back_from_date_selection(callback: CallbackQuery, state: FSMContext):
 
 async def back_from_time_selection(callback: CallbackQuery, state: FSMContext):
     """Возврат из выбора времени к форме бронирования."""
+    await show_booking_form(callback, state)
+
+
+async def show_booking_other_menu(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    booking_data = data.get("booking_data", {})
+    service_name = booking_data.get("service_name") or data.get("service_name", "")
+    await callback.message.edit_text(
+        _build_booking_other_menu_text(service_name, booking_data),
+        reply_markup=get_booking_other_keyboard(int(data["service_id"]), booking_data),
+        parse_mode="HTML",
+    )
+
+
+async def back_from_other_selection(callback: CallbackQuery, state: FSMContext):
     await show_booking_form(callback, state)
 
 async def start_name_input(callback: CallbackQuery, state: FSMContext):
@@ -1348,6 +1321,8 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(confirm_time_selection, F.data.startswith("select_time_"))
     dp.callback_query.register(back_from_date_selection, F.data.startswith("booking_back_from_date_"))
     dp.callback_query.register(back_from_time_selection, F.data.startswith("booking_back_from_time_"))
+    dp.callback_query.register(show_booking_other_menu, F.data.startswith("booking_other_"))
+    dp.callback_query.register(back_from_other_selection, F.data.startswith("booking_back_from_other_"))
     dp.callback_query.register(start_name_input, F.data.startswith("booking_name_"))
     dp.message.register(process_name_input, BookingStates.entering_name)
     dp.callback_query.register(start_last_name_input, F.data.startswith("booking_last_name_"))

@@ -12,7 +12,7 @@ from app.integrations.local.calendar.cache_sync import run_calendar_cache_sync_l
 from app.integrations.local.db import db_manager
 from app.interfaces.messenger.tg.services.booking_reminders import run_booking_reminder_loop, send_vk_booking_reminders
 from app.interfaces.messenger.vk.handlers import register_handlers
-from app.interfaces.messenger.vk.state_dispenser import RedisStateDispenser
+from app.interfaces.messenger.vk.state_dispenser import MemoryStateDispenser, RedisStateDispenser
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,13 @@ async def build_bot() -> Bot:
     try:
         await state_dispenser.healthcheck()
     except Exception as e:
-        raise RuntimeError(
-            f"Redis недоступен по REDIS_URL={REDIS_URL}. "
-            "Запустите Redis и проверьте .env"
-        ) from e
+        logger.warning(
+            "Redis недоступен по REDIS_URL=%s. VK бот будет запущен с in-memory state dispenser. "
+            "Состояния VK не переживут перезапуск процесса. Ошибка: %s",
+            REDIS_URL,
+            e,
+        )
+        state_dispenser = MemoryStateDispenser(ttl_seconds=VK_REDIS_STATE_TTL_SECONDS)
 
     bot = Bot(api=_build_vk_api(), state_dispenser=state_dispenser)
     register_handlers(bot)
