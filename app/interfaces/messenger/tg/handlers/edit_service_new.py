@@ -8,7 +8,7 @@ from app.interfaces.messenger.tg.keyboards import (
     get_existing_services_keyboard
 )
 from app.interfaces.messenger.tg.states import AdminStates
-from app.integrations.local.db import service_repo
+from app.integrations.local.db import extra_service_repo, service_repo
 from app.core.modules.admin.service_editor import (
     build_edit_service_editor_text,
     parse_duration_pair,
@@ -21,7 +21,7 @@ from app.core.modules.admin.service_crud import (
     build_service_save_text,
 )
 from app.core.modules.admin.service_editor_state import update_nested_state_data
-from app.core.modules.admin.service_extras import get_active_extra_services, toggle_extra_service
+from app.core.modules.admin.service_extras import format_selected_extras, get_active_extra_services, toggle_extra_service
 from app.core.modules.admin.service_prompts import (
     ADMIN_DENIED_TEXT,
     get_service_extras_text,
@@ -72,6 +72,7 @@ async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_
     extra_services = _normalize_plus_ids(service.plus_service_ids)
     photos_count = count_photos_in_dir(get_service_dir(service_id))
 
+    extra_catalog = await extra_service_repo.get_all()
     service_data = {
         'name': service.name,
         'description': service.description,
@@ -85,6 +86,7 @@ async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_
         'min_duration': service.min_duration_minutes,
         'step_duration': service.duration_step_minutes,
         'extra_services': extra_services,
+        'extras': format_selected_extras(extra_services, extra_catalog),
         'photos_count': photos_count,
         'photo_ids': service.photo_ids,
     }
@@ -164,8 +166,8 @@ async def edit_service_extras_callback(callback: CallbackQuery, state: FSMContex
         return
     
     data = await state.get_data()
-    services = await service_repo.get_all()
-    active_services = get_active_extra_services(services, exclude_service_id=data.get("edit_service_id"))
+    services = await extra_service_repo.get_all()
+    active_services = get_active_extra_services(services)
     
     if not active_services:
         await callback.answer("❌ Нет доступных услуг для выбора", show_alert=True)
@@ -290,8 +292,9 @@ async def select_edit_extra_service_callback(callback: CallbackQuery, state: FSM
         {"extra_services": selected_services},
     )
 
-    services = await service_repo.get_all()
-    active_services = get_active_extra_services(services, exclude_service_id=data.get("edit_service_id"))
+    services = await extra_service_repo.get_all()
+    active_services = get_active_extra_services(services)
+    service_data["extras"] = format_selected_extras(selected_services, services)
 
     await callback.message.edit_text(
         get_service_extras_text("edit"),

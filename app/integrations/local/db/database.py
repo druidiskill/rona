@@ -52,6 +52,20 @@ class DatabaseManager:
 
         await db.execute(
             """
+            CREATE TABLE IF NOT EXISTS extra_services (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                price_text VARCHAR(255),
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        await db.execute(
+            """
             CREATE TABLE IF NOT EXISTS clients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_id INTEGER UNIQUE,
@@ -354,6 +368,49 @@ class DatabaseManager:
 
             await db.commit()
             print("Initial services inserted")
+
+        cursor = await db.execute("SELECT COUNT(*) FROM extra_services")
+        extra_count = await cursor.fetchone()
+        if extra_count[0] == 0:
+            extra_services = [
+                (
+                    "Фотограф",
+                    "Съёмка, обработка и сопровождение.",
+                    "11 500 ₽",
+                    10,
+                    1,
+                ),
+                (
+                    "Гримерка",
+                    "Доступна с 9:00 до 21:00 и бронируется по времени начала съемки.",
+                    "200/250 ₽/час",
+                    20,
+                    1,
+                ),
+                (
+                    "Розжиг камина",
+                    "Подготовка камина к съёмке.",
+                    "400 ₽",
+                    30,
+                    1,
+                ),
+                (
+                    "Прокат: халат и полотенце",
+                    "Прокат комплекта для съёмки.",
+                    "200 ₽",
+                    40,
+                    1,
+                ),
+            ]
+            await db.executemany(
+                """
+                INSERT INTO extra_services (name, description, price_text, sort_order, is_active)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                extra_services,
+            )
+            await db.commit()
+            print("Initial extra services inserted")
 
 
 db_manager = DatabaseManager()

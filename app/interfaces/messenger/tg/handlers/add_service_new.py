@@ -8,7 +8,7 @@ from app.interfaces.messenger.tg.keyboards import (
     get_existing_services_keyboard
 )
 from app.interfaces.messenger.tg.states import AdminStates
-from app.integrations.local.db import service_repo
+from app.integrations.local.db import extra_service_repo, service_repo
 from app.core.modules.admin.service_editor import (
     build_add_service_editor_text,
     parse_duration_pair,
@@ -193,7 +193,7 @@ async def add_service_extras_callback(callback: CallbackQuery, state: FSMContext
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
     
-    services = await service_repo.get_all()
+    services = await extra_service_repo.get_all()
     active_services = get_active_extra_services(services)
     data = await state.get_data()
     service_data = data.get("new_service_data", {})
@@ -469,7 +469,7 @@ async def select_extra_service_callback(callback: CallbackQuery, state: FSMConte
         {"extra_services": selected_ids},
     )
 
-    services = await service_repo.get_all()
+    services = await extra_service_repo.get_all()
     active_services = get_active_extra_services(services)
 
     await callback.message.edit_text(
@@ -488,7 +488,7 @@ async def extras_done_callback(callback: CallbackQuery, state: FSMContext, is_ad
     data = await state.get_data()
     service_data = data.get("new_service_data", {})
     selected_ids = service_data.get("extra_services", [])
-    services = await service_repo.get_all()
+    services = await extra_service_repo.get_all()
 
     await update_nested_state_data(
         state,

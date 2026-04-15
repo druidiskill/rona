@@ -11,6 +11,10 @@ from app.core.modules.booking.availability import (
     get_time_slots_for_date as svc_get_time_slots_for_date,
     is_booking_available as svc_is_booking_available,
 )
+from app.core.modules.booking.extra_services import (
+    build_extra_service_booking_label,
+    build_extra_service_label_map,
+)
 from app.core.modules.booking.common import (
     format_full_name as core_format_full_name,
     format_optional_text as core_format_optional_text,
@@ -72,7 +76,7 @@ from app.core.modules.booking.validation import (
     validate_person_name,
 )
 from app.core.modules.services.details import build_service_details_text
-from app.integrations.local.db import client_repo, service_repo
+from app.integrations.local.db import client_repo, extra_service_repo, service_repo
 from app.integrations.local.db.models import Client
 from app.interfaces.messenger.tg.services.booking_formatters import (
     format_booking_date,
@@ -272,20 +276,17 @@ def _get_guests_keyboard(service_id: int, max_guests: int = 1) -> str:
     return kb.get_json()
 
 
-def _get_extras_keyboard(service_id: int, selected: list[str]) -> str:
-    items = [
-        ("photographer", "📸 Фотограф 11 500₽"),
-        ("makeuproom", "💄 Гримерка 200/250₽/ч"),
-        ("fireplace", "🔥 Розжиг камина 400₽"),
-        ("rental", "🧺 Прокат 200₽"),
-    ]
+def _get_extras_keyboard(service_id: int, extra_services: list, selected: list[int]) -> str:
     kb = Keyboard(one_time=False, inline=False)
-    for key, label in items:
-        mark = "✅ " if key in selected else ""
+    for extra_service in extra_services:
+        mark = "✅ " if extra_service.id in selected else ""
+        label = build_extra_service_booking_label(extra_service)
+        if len(label) > 36:
+            label = f"{label[:33].rstrip()}..."
         kb.add(
             Text(
                 f"{mark}{label}",
-                payload={"a": "bk_extra_toggle", "sid": service_id, "x": key},
+                payload={"a": "bk_extra_toggle", "sid": service_id, "x": extra_service.id},
             ),
             color=KeyboardButtonColor.PRIMARY,
         ).row()
@@ -333,6 +334,11 @@ def _get_time_keyboard(service_id: int, date_value: str, slots: list[dict], page
     return kb.get_json()
 
 
+def _get_time_total_pages(slots: list[dict], page_size: int = 8) -> int:
+    total = len(slots)
+    return max(1, (total + page_size - 1) // page_size)
+
+
 def _get_back_form_keyboard(service_id: int) -> str:
     kb = Keyboard(one_time=False, inline=False)
     kb.add(Text("↩️ К форме", payload={"a": "bk_back_form", "sid": service_id}), color=KeyboardButtonColor.SECONDARY)
@@ -368,7 +374,7 @@ async def _show_form(bot: Bot, message: Message, booking_data: dict):
         comment_display=_format_optional_value(booking_data.get("comment")),
         guests_display=format_booking_guests(booking_data.get("guests_count")),
         duration_display=f"{duration_minutes} мин.",
-        extras_display=format_extras_display(booking_data.get("extras", [])),
+        extras_display=format_extras_display(booking_data.get("extras", []), booking_data.get("extra_labels")),
         email_display=booking_data.get("email") or "Не указан",
         required_mark="⚫",
         optional_mark="⚪",
@@ -395,7 +401,7 @@ def _build_other_text(booking_data: dict) -> str:
         phone_display=booking_data.get("phone") or "Не указан",
         discount_code_display=_format_optional_value(booking_data.get("discount_code")),
         comment_display=_format_optional_value(booking_data.get("comment")),
-        extras_display=format_extras_display(booking_data.get("extras", [])),
+        extras_display=format_extras_display(booking_data.get("extras", []), booking_data.get("extra_labels")),
         email_display=booking_data.get("email") or "Не указан",
         optional_mark="⚪",
         instruction_text="Выберите параметр:",
@@ -430,8 +436,13 @@ async def _show_time_selection_screen(bot: Bot, message: Message, data: dict, da
             keyboard=_get_current_form_keyboard(data),
         )
         return
+    total_pages = _get_time_total_pages(normalized_slots)
+    page = max(0, min(page, total_pages - 1))
+    text = build_time_selection_text(date_display=selected_date.strftime("%d.%m.%Y"), html=False)
+    if total_pages > 1:
+        text = f"{text}\n\nСтраница {page + 1} из {total_pages}"
     await message.answer(
-        build_time_selection_text(date_display=selected_date.strftime("%d.%m.%Y"), html=False),
+        text,
         keyboard=_get_time_keyboard(service_id, date_value, normalized_slots, page=page),
     )
 
@@ -652,30 +663,50 @@ def register_booking_handlers(bot: Bot):
     @bot.on.message(text="➕ Доп. услуги", state=VkBookingState.filling_form)
     async def booking_extras(message: Message):
         data = _get_booking_data(message)
+        extra_services = await extra_service_repo.get_all_active()
+        data["extra_labels"] = build_extra_service_label_map(extra_services)
+        selected_extras = [
+            int(extra_id)
+            for extra_id in data.get("extras", [])
+            if isinstance(extra_id, int) or (isinstance(extra_id, str) and extra_id.isdigit())
+        ]
+        await _set_state(bot, message, VkBookingState.filling_form, data)
+        if not extra_services:
+            await message.answer(
+                "➕ Выберите дополнительные услуги:\n\nСейчас нет доступных доп. услуг.",
+                keyboard=_get_back_form_keyboard(int(data["service_id"])),
+            )
+            return
         await message.answer(
             build_choose_extras_text(html=False),
-            keyboard=_get_extras_keyboard(int(data["service_id"]), data.get("extras", [])),
+            keyboard=_get_extras_keyboard(int(data["service_id"]), extra_services, selected_extras),
         )
 
     @bot.on.message(payload_contains={"a": "bk_extra_toggle"}, state=VkBookingState.filling_form)
     async def booking_extra_toggle(message: Message):
         payload = message.get_payload_json() or {}
         data = _get_booking_data(message)
-        extra = payload.get("x")
-        extras = list(data.get("extras", []))
-        if extra in extras:
-            extras.remove(extra)
+        extra_services = await extra_service_repo.get_all_active()
+        data["extra_labels"] = build_extra_service_label_map(extra_services)
+        extra_id = int(payload.get("x"))
+        extras = [
+            int(extra)
+            for extra in data.get("extras", [])
+            if isinstance(extra, int) or (isinstance(extra, str) and extra.isdigit())
+        ]
+        if extra_id in extras:
+            extras.remove(extra_id)
         else:
-            extras.append(extra)
+            extras.append(extra_id)
         data = merge_booking_data(
             data,
             state_service_name=data.get("service_name", ""),
-            updates={"extras": extras},
+            updates={"extras": extras, "extra_labels": data.get("extra_labels", {})},
         )
         await _set_state(bot, message, VkBookingState.filling_form, data)
         await message.answer(
             build_choose_extras_text(html=False),
-            keyboard=_get_extras_keyboard(int(data["service_id"]), extras),
+            keyboard=_get_extras_keyboard(int(data["service_id"]), extra_services, extras),
         )
 
     @bot.on.message(payload_contains={"a": "bk_name"}, state=VkBookingState.filling_form)

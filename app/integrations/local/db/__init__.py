@@ -7,6 +7,7 @@ from .models import (
     BookingStatus,
     BookingWithDetails,
     Client,
+    ExtraService,
     PriceCalculation,
     Service,
     ServiceWithPhotos,
@@ -17,6 +18,7 @@ from .repositories import (
     BookingReminderLogRepository,
     BookingRepository,
     ClientRepository,
+    ExtraServiceRepository,
     ServiceRepository,
 )
 from .services import BookingService, ClientService
@@ -24,6 +26,7 @@ from .faq_repo import FaqEntry, FaqRepository
 from .support_repo import SupportRepository
 
 service_repo = ServiceRepository(db_manager)
+extra_service_repo = ExtraServiceRepository(db_manager)
 client_repo = ClientRepository(db_manager)
 booking_repo = BookingRepository(db_manager)
 admin_repo = AdminRepository(db_manager)
@@ -47,6 +50,8 @@ __all__ = [
     "ClientRepository",
     "ClientService",
     "DatabaseManager",
+    "ExtraService",
+    "ExtraServiceRepository",
     "FaqEntry",
     "FaqRepository",
     "PriceCalculation",
@@ -62,6 +67,7 @@ __all__ = [
     "client_repo",
     "client_service",
     "db_manager",
+    "extra_service_repo",
     "faq_repo",
     "service_repo",
     "support_repo",

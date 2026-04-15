@@ -6,11 +6,13 @@ from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta, date
 
 from app.interfaces.messenger.tg.keyboards import (
+    TIME_SELECTION_PAGE_SIZE,
     get_booking_form_keyboard,
     get_booking_other_keyboard,
     get_main_menu_keyboard,
     get_date_selection_keyboard,
     get_time_selection_keyboard,
+    get_time_selection_total_pages,
     get_duration_selection_keyboard,
 )
 from app.interfaces.messenger.tg.states import BookingStates
@@ -18,6 +20,10 @@ from app.core.modules.booking.availability import (
     build_default_time_slots as svc_build_default_time_slots,
     get_time_slots_for_date as svc_get_time_slots_for_date,
     is_booking_available as svc_is_booking_available,
+)
+from app.core.modules.booking.extra_services import (
+    build_extra_service_booking_label,
+    build_extra_service_label_map,
 )
 from app.core.modules.booking.common import (
     format_full_name as core_format_full_name,
@@ -92,7 +98,7 @@ from app.interfaces.messenger.tg.services.booking_formatters import (
 )
 from app.interfaces.messenger.tg.services.admin_notifications import send_telegram_admin_notification
 from app.interfaces.messenger.vk.services.admin_notifications import send_vk_admin_notification
-from app.integrations.local.db import service_repo
+from app.integrations.local.db import extra_service_repo, service_repo
 
 logger = logging.getLogger(__name__)
 
@@ -169,8 +175,8 @@ def _format_booking_guests(guests_value) -> str:
     return svc_format_booking_guests(guests_value)
 
 
-def _format_extras_display(extras: list[str]) -> str:
-    return svc_format_extras_display(extras)
+def _format_extras_display(extras: list, extra_labels: dict | None = None) -> str:
+    return svc_format_extras_display(extras, extra_labels)
 
 def _format_full_name(booking_data: dict) -> str:
     return core_format_full_name(booking_data)
@@ -198,6 +204,7 @@ def _build_booking_form_text(service_name: str, booking_data: dict, state_data: 
     time_display = _format_booking_time_range(booking_data.get("time"), duration_minutes)
     guests_display = _format_booking_guests(booking_data.get("guests_count"))
     email_display = booking_data.get("email") or "Не указан"
+    extras_display = _format_extras_display(booking_data.get("extras", []), booking_data.get("extra_labels"))
     return build_booking_form_text(
         service_name=service_name,
         date_display=date_display,
@@ -209,7 +216,7 @@ def _build_booking_form_text(service_name: str, booking_data: dict, state_data: 
         comment_display=_format_optional_booking_value(booking_data.get("comment")),
         guests_display=guests_display,
         duration_display=f"{duration_minutes} мин.",
-        extras_display=_format_extras_display(booking_data.get("extras", [])),
+        extras_display=extras_display,
         email_display=email_display,
         required_mark="‼️",
         optional_mark="⚪",
@@ -225,6 +232,7 @@ def _build_booking_form_text(service_name: str, booking_data: dict, state_data: 
 
 
 def _build_booking_other_menu_text(service_name: str, booking_data: dict) -> str:
+    extras_display = _format_extras_display(booking_data.get("extras", []), booking_data.get("extra_labels"))
     return build_booking_other_text(
         service_name=service_name,
         name_display=booking_data.get("name") or "Не указано",
@@ -232,7 +240,7 @@ def _build_booking_other_menu_text(service_name: str, booking_data: dict) -> str
         phone_display=booking_data.get("phone") or "Не указан",
         discount_code_display=_format_optional_booking_value(booking_data.get("discount_code")),
         comment_display=_format_optional_booking_value(booking_data.get("comment")),
-        extras_display=_format_extras_display(booking_data.get("extras", [])),
+        extras_display=extras_display,
         email_display=booking_data.get("email") or "Не указан",
         optional_mark="⚪",
         instruction_text="Выберите параметр для заполнения:",
@@ -371,6 +379,7 @@ async def _show_time_selection_for_date(
     *,
     service_id: int,
     selected_date: str,
+    page: int = 0,
 ) -> None:
     data = await state.get_data()
     booking_data = data.get("booking_data", {})
@@ -405,13 +414,18 @@ async def _show_time_selection_for_date(
             min_duration=int(_get_min_duration_from_state(data)),
             selected_duration=duration_minutes,
         )
+        total_pages = get_time_selection_total_pages(time_slots, page_size=TIME_SELECTION_PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        text = build_time_selection_text(
+            date_display=selected_date_obj.strftime("%d.%m.%Y"),
+            html=True,
+            duration_hint=duration_hint,
+        )
+        if total_pages > 1:
+            text = f"{text}\n\nСтраница {page + 1} из {total_pages}"
         await callback.message.edit_text(
-            build_time_selection_text(
-                date_display=selected_date_obj.strftime("%d.%m.%Y"),
-                html=True,
-                duration_hint=duration_hint,
-            ),
-            reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date),
+            text,
+            reply_markup=get_time_selection_keyboard(service_id, time_slots, selected_date, page=page),
             parse_mode="HTML",
         )
     except Exception as e:
@@ -466,6 +480,7 @@ async def select_time(callback: CallbackQuery, state: FSMContext):
         state,
         service_id=service_id,
         selected_date=selected_date,
+        page=0,
     )
 
 async def date_prev_week(callback: CallbackQuery, state: FSMContext):
@@ -503,6 +518,22 @@ async def confirm_date_selection(callback: CallbackQuery, state: FSMContext):
         state,
         service_id=service_id,
         selected_date=selected_date,
+        page=0,
+    )
+
+async def time_page(callback: CallbackQuery, state: FSMContext):
+    """Переключение страниц со слотами времени."""
+    parts = callback.data.split("_")
+    service_id = int(parts[2])
+    selected_date = parts[3]
+    page = int(parts[4])
+
+    await _show_time_selection_for_date(
+        callback,
+        state,
+        service_id=service_id,
+        selected_date=selected_date,
+        page=page,
     )
 
 async def time_prev_date(callback: CallbackQuery, state: FSMContext):
@@ -516,6 +547,7 @@ async def time_prev_date(callback: CallbackQuery, state: FSMContext):
         state,
         service_id=service_id,
         selected_date=prev_date,
+        page=0,
     )
 
 async def time_next_date(callback: CallbackQuery, state: FSMContext):
@@ -529,6 +561,7 @@ async def time_next_date(callback: CallbackQuery, state: FSMContext):
         state,
         service_id=service_id,
         selected_date=next_date,
+        page=0,
     )
 
 async def confirm_time_selection(callback: CallbackQuery, state: FSMContext):
@@ -1039,44 +1072,59 @@ async def start_extras_input(callback: CallbackQuery, state: FSMContext):
             return
     
     booking_data = data.get('booking_data', {})
-    current_extras = booking_data.get('extras', [])
-    
-    available_extras = {
-        'photographer': '📸 Фотограф (11 500 ₽: съёмка, обработка и сопровождение)',
-        'makeuproom': '💄 Гримерка (200/250 ₽/час)',
-        'fireplace': '🔥 Розжиг камина (400 ₽)',
-        'rental': '🧺 Прокат: халат и полотенце (200 ₽)'
-    }
-    
+    current_extras = [
+        int(extra_id)
+        for extra_id in booking_data.get("extras", [])
+        if isinstance(extra_id, int) or (isinstance(extra_id, str) and extra_id.isdigit())
+    ]
+    available_extras = await extra_service_repo.get_all_active()
+    extra_labels = build_extra_service_label_map(available_extras)
+    booking_data["extra_labels"] = extra_labels
+    await state.update_data(booking_data=booking_data)
+
     text = build_choose_extras_text(html=True)
-    
-    for key, label in available_extras.items():
-        status = "✅" if key in current_extras else "▫️"
+
+    if not available_extras:
+        text += "\n\nСейчас нет доступных доп. услуг."
+        await state.set_state(BookingStates.selecting_extras)
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="🔙 Назад", callback_data=f"booking_extras_back_{service_id}")
+                ]]
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    for extra_service in available_extras:
+        label = build_extra_service_booking_label(extra_service)
+        status = "✅" if extra_service.id in current_extras else "▫️"
         text += f"{status} {label}\n"
-    
+
     text += "\nНажмите на кнопку ниже, чтобы добавить или убрать услугу."
-    text += "\n\n<i>Гримерка доступна с 9:00 до 21:00 и бронируется по времени начала съемки.</i>"
-    
+
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
+
     keyboard = []
-    for key, label in available_extras.items():
-        is_selected = key in current_extras
-        button_text = f"{'✅' if is_selected else '➕'} {label.split('(')[0].strip()}"
+    for extra_service in available_extras:
+        is_selected = extra_service.id in current_extras
+        button_text = f"{'✅' if is_selected else '➕'} {extra_service.name}"
         action = "remove" if is_selected else "add"
         keyboard.append([
             InlineKeyboardButton(
                 text=button_text,
-                callback_data=f"booking_toggle_extra_{service_id}_{key}_{action}"
+                callback_data=f"booking_toggle_extra_{service_id}_{extra_service.id}_{action}"
             )
         ])
-    
-        keyboard.append([
-            InlineKeyboardButton(
-                text="✅ Готово",
-                callback_data=f"booking_extras_done_{service_id}"
-            )
-        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            text="✅ Готово",
+            callback_data=f"booking_extras_done_{service_id}"
+        )
+    ])
     keyboard.append([
         InlineKeyboardButton(
             text="🔙 Назад",
@@ -1095,17 +1143,21 @@ async def toggle_extra_service(callback: CallbackQuery, state: FSMContext):
     """������������ �������������� ������"""
     parts = callback.data.split("_")
     service_id = int(parts[3])
-    extra_key = parts[4]
+    extra_id = int(parts[4])
     action = parts[5]  # "add" or "remove"
     
     data = await state.get_data()
     booking_data = data.get('booking_data', {})
-    extras = booking_data.get('extras', [])
+    extras = [
+        int(item)
+        for item in booking_data.get("extras", [])
+        if isinstance(item, int) or (isinstance(item, str) and item.isdigit())
+    ]
     
-    if action == "add" and extra_key not in extras:
-        extras.append(extra_key)
-    elif action == "remove" and extra_key in extras:
-        extras.remove(extra_key)
+    if action == "add" and extra_id not in extras:
+        extras.append(extra_id)
+    elif action == "remove" and extra_id in extras:
+        extras.remove(extra_id)
     
     booking_data['extras'] = extras
     # ��������� service_name ���� ��� ��� ��� � booking_data
@@ -1316,6 +1368,7 @@ def register_booking_handlers(dp: Dispatcher):
     dp.callback_query.register(date_prev_week, F.data.startswith("date_prev_week_"))
     dp.callback_query.register(date_next_week, F.data.startswith("date_next_week_"))
     dp.callback_query.register(confirm_date_selection, F.data.startswith("select_date_"))
+    dp.callback_query.register(time_page, F.data.startswith("time_page_"))
     dp.callback_query.register(time_prev_date, F.data.startswith("time_prev_date_"))
     dp.callback_query.register(time_next_date, F.data.startswith("time_next_date_"))
     dp.callback_query.register(confirm_time_selection, F.data.startswith("select_time_"))

@@ -4,7 +4,7 @@ from typing import Optional, List
 
 from datetime import datetime
 
-from .models import Service, Client, Booking, Admin, BookingStatus
+from .models import ExtraService, Service, Client, Booking, Admin, BookingStatus
 from .database import DatabaseManager
 
 
@@ -156,6 +156,100 @@ class ServiceRepository:
             photo_ids=row[13],
             is_active=bool(row[14]),
             created_at=datetime.fromisoformat(row[15]) if row[15] else None,
+        )
+
+
+class ExtraServiceRepository:
+    """Repository for additional services shown in booking extras."""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db_manager = db_manager
+
+    async def get_all(self) -> List[ExtraService]:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                SELECT id, name, description, price_text, sort_order, is_active, created_at
+                FROM extra_services
+                ORDER BY sort_order, name, id
+                """
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_extra_service(row) for row in rows]
+
+    async def get_all_active(self) -> List[ExtraService]:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                SELECT id, name, description, price_text, sort_order, is_active, created_at
+                FROM extra_services
+                WHERE is_active = 1
+                ORDER BY sort_order, name, id
+                """
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_extra_service(row) for row in rows]
+
+    async def get_by_id(self, extra_service_id: int) -> Optional[ExtraService]:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                SELECT id, name, description, price_text, sort_order, is_active, created_at
+                FROM extra_services
+                WHERE id = ?
+                """,
+                (extra_service_id,),
+            )
+            row = await cursor.fetchone()
+            return self._row_to_extra_service(row) if row else None
+
+    async def create(self, extra_service: ExtraService) -> int:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO extra_services (name, description, price_text, sort_order, is_active)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    extra_service.name,
+                    extra_service.description,
+                    extra_service.price_text,
+                    extra_service.sort_order,
+                    extra_service.is_active,
+                ),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def update(self, extra_service: ExtraService) -> bool:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                UPDATE extra_services
+                SET name = ?, description = ?, price_text = ?, sort_order = ?, is_active = ?
+                WHERE id = ?
+                """,
+                (
+                    extra_service.name,
+                    extra_service.description,
+                    extra_service.price_text,
+                    extra_service.sort_order,
+                    extra_service.is_active,
+                    extra_service.id,
+                ),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    def _row_to_extra_service(self, row) -> ExtraService:
+        return ExtraService(
+            id=row[0],
+            name=row[1],
+            description=row[2] or "",
+            price_text=row[3] or "",
+            sort_order=int(row[4] or 0),
+            is_active=bool(row[5]),
+            created_at=datetime.fromisoformat(row[6]) if row[6] else None,
         )
 
 

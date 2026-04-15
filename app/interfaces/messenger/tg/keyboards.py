@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from app.core.modules.booking.form_config import get_booking_field_label
 from app.core.modules.booking.form_fields import get_booking_misc_fields, get_booking_required_menu_fields
 
+TIME_SELECTION_PAGE_SIZE = 12
+
 def get_main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     """Главное меню."""
     keyboard = [
@@ -142,44 +144,74 @@ def get_date_selection_keyboard(service_id: int, week_offset: int = 0) -> Inline
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_time_selection_keyboard(service_id: int, time_slots: list, selected_date: str = None) -> InlineKeyboardMarkup:
-    """Клавиатура выбора времени с перелистыванием дат"""
+def get_time_selection_total_pages(time_slots: list, page_size: int = TIME_SELECTION_PAGE_SIZE) -> int:
+    total = len(time_slots)
+    return max(1, (total + page_size - 1) // page_size)
+
+
+def get_time_selection_keyboard(
+    service_id: int,
+    time_slots: list,
+    selected_date: str | None = None,
+    page: int = 0,
+    page_size: int = TIME_SELECTION_PAGE_SIZE,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени с пагинацией слотов и перелистыванием дат."""
     keyboard = []
-    
-    # Показываем временные слоты (максимум 12 для полного дня)
-    for i, slot in enumerate(time_slots[:12]):  # Показываем до 12 слотов (9:00-21:00)
-        start_time = slot['start_time']
-        is_available = slot['is_available']
-        
-        time_str = start_time.strftime('%H:%M')
+    total_pages = get_time_selection_total_pages(time_slots, page_size=page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    end_idx = start_idx + page_size
+
+    for index, slot in enumerate(time_slots[start_idx:end_idx], start=start_idx):
+        start_time = slot["start_time"]
+        is_available = slot["is_available"]
+        time_str = start_time.strftime("%H:%M")
         status = "✅" if is_available else "❌"
-        
+
         keyboard.append([
             InlineKeyboardButton(
                 text=f"{status} {time_str}",
-                callback_data=f"select_time_{service_id}_{i}" if is_available else "unavailable"
+                callback_data=f"select_time_{service_id}_{index}" if is_available else "unavailable",
             )
         ])
-    
-    # Кнопки перелистывания дат
+
+    if selected_date and total_pages > 1:
+        page_nav_row = []
+        if page > 0:
+            page_nav_row.append(
+                InlineKeyboardButton(
+                    text="⬅️ Слоты",
+                    callback_data=f"time_page_{service_id}_{selected_date}_{page - 1}",
+                )
+            )
+        if page < total_pages - 1:
+            page_nav_row.append(
+                InlineKeyboardButton(
+                    text="Слоты ➡️",
+                    callback_data=f"time_page_{service_id}_{selected_date}_{page + 1}",
+                )
+            )
+        if page_nav_row:
+            keyboard.append(page_nav_row)
+
     if selected_date:
         selected_date_obj = datetime.strptime(selected_date, "%Y-%m-%d").date()
         prev_date = selected_date_obj - timedelta(days=1)
         next_date = selected_date_obj + timedelta(days=1)
-        
+
         navigation_row = [
             InlineKeyboardButton(
-                text=f"⬅️ {prev_date.strftime('%d.%m')}", 
-                callback_data=f"time_prev_date_{service_id}_{prev_date.strftime('%Y-%m-%d')}"
+                text=f"⬅️ {prev_date.strftime('%d.%m')}",
+                callback_data=f"time_prev_date_{service_id}_{prev_date.strftime('%Y-%m-%d')}",
             ),
             InlineKeyboardButton(
-                text=f"➡️ {next_date.strftime('%d.%m')}", 
-                callback_data=f"time_next_date_{service_id}_{next_date.strftime('%Y-%m-%d')}"
-            )
+                text=f"➡️ {next_date.strftime('%d.%m')}",
+                callback_data=f"time_next_date_{service_id}_{next_date.strftime('%Y-%m-%d')}",
+            ),
         ]
         keyboard.append(navigation_row)
-    
-    # Кнопка "Назад"
+
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"booking_back_from_time_{service_id}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -237,8 +269,63 @@ def get_services_management_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="➕ Добавить услугу", callback_data="add_service_new")],
         [InlineKeyboardButton(text="✏️ Редактировать услугу", callback_data="edit_service")],
+        [InlineKeyboardButton(text="📦 Доп. услуги", callback_data="admin_extra_services")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_extra_services_management_keyboard() -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Добавить доп. услугу", callback_data="add_extra_service")],
+        [InlineKeyboardButton(text="✏️ Редактировать доп. услугу", callback_data="edit_extra_service")],
+        [InlineKeyboardButton(text="🔙 К услугам", callback_data="admin_services")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_extra_services_list_keyboard(extra_services: list) -> InlineKeyboardMarkup:
+    keyboard = []
+    for extra_service in extra_services:
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"📦 {extra_service.name}",
+                callback_data=f"edit_extra_service_{extra_service.id}",
+            )
+        ])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_extra_services")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_extra_service_edit_keyboard(extra_service_id: int, is_active: bool = True) -> InlineKeyboardMarkup:
+    status_button = (
+        InlineKeyboardButton(text="🗑️ Деактивировать", callback_data=f"delete_extra_service_{extra_service_id}")
+        if is_active
+        else InlineKeyboardButton(text="✅ Активировать", callback_data=f"activate_extra_service_{extra_service_id}")
+    )
+    keyboard = [
+        [InlineKeyboardButton(text="🔧 Редактировать", callback_data=f"edit_extra_service_new_{extra_service_id}")],
+        [status_button],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_extra_services")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_extra_service_editor_keyboard(mode: str, extra_service_id: int | None = None) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(text="📝 Название", callback_data=f"{mode}_extra_service_name")],
+        [InlineKeyboardButton(text="📄 Описание", callback_data=f"{mode}_extra_service_description")],
+        [InlineKeyboardButton(text="💰 Цена / подпись", callback_data=f"{mode}_extra_service_price_text")],
+        [InlineKeyboardButton(text="🔢 Порядок", callback_data=f"{mode}_extra_service_sort_order")],
+        [InlineKeyboardButton(
+            text="✅ Создать" if mode == "add" else "💾 Сохранить",
+            callback_data=f"{mode}_extra_service_save",
+        )],
+    ]
+    if mode == "edit" and extra_service_id:
+        keyboard.append([InlineKeyboardButton(text="🔙 К доп. услуге", callback_data=f"edit_extra_service_{extra_service_id}")])
+    else:
+        keyboard.append([InlineKeyboardButton(text="🔙 К доп. услугам", callback_data="admin_extra_services")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -462,10 +549,8 @@ def get_add_service_price_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_add_service_extras_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура дополнительных услуг"""
+    """Резервная клавиатура раздела доп. услуг."""
     keyboard = [
-        [InlineKeyboardButton(text="📸 Фотограф", callback_data="add_service_photographer")],
-        [InlineKeyboardButton(text="💄 Гримерка", callback_data="add_service_makeuproom")],
         [InlineKeyboardButton(text="🔙 Назад к услуге", callback_data="add_service_main")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

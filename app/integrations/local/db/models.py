@@ -43,6 +43,19 @@ class Service:
 
 
 @dataclass
+class ExtraService:
+    """Additional service model for booking extras."""
+
+    id: Optional[int] = None
+    name: str = ""
+    description: str = ""
+    price_text: str = ""
+    sort_order: int = 0
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+
+
+@dataclass
 class Client:
     """Client model."""
 
@@ -141,6 +154,7 @@ __all__ = [
     "BookingStatus",
     "BookingWithDetails",
     "Client",
+    "ExtraService",
     "PriceCalculation",
     "Service",
     "ServiceWithPhotos",

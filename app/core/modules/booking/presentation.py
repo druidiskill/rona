@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-
-EXTRA_LABELS = {
-    "photographer": "Фотограф",
-    "makeuproom": "Гримерка",
-    "fireplace": "Розжиг камина",
-    "rental": "Прокат: халат и полотенце",
-}
+from app.core.modules.booking.extra_services import format_extra_labels, has_extra_named
 
 
 def _format_full_name(data: dict) -> str:
@@ -21,11 +15,8 @@ def _optional_text(value: str | None, empty_label: str = "Не указан") ->
     return text or empty_label
 
 
-def format_extras_display(extras: list[str] | None) -> str:
-    items = extras or []
-    if not items:
-        return "Нет"
-    return ", ".join(EXTRA_LABELS.get(item, item) for item in items)
+def format_extras_display(extras: list | None, extra_labels: dict | None = None) -> str:
+    return format_extra_labels(extras or [], extra_labels)
 
 
 def build_booking_summary(
@@ -38,6 +29,7 @@ def build_booking_summary(
     duration_minutes: int,
 ) -> dict:
     extras = booking_data.get("extras", [])
+    extra_labels = booking_data.get("extra_labels") or {}
     return {
         "service_name": service_name,
         "service_id": service_id,
@@ -48,11 +40,11 @@ def build_booking_summary(
         "email": _optional_text(booking_data.get("email")),
         "phone": _optional_text(booking_data.get("phone")),
         "guests_count": booking_data.get("guests_count") or "Не указано",
-        "extras_display": format_extras_display(extras),
+        "extras_display": format_extras_display(extras, extra_labels),
         "discount_code": _optional_text(booking_data.get("discount_code")),
         "comment": _optional_text(booking_data.get("comment")),
-        "need_photographer": "Да" if "photographer" in extras else "Нет",
-        "need_makeuproom": "Да" if "makeuproom" in extras else "Нет",
+        "need_photographer": "Да" if has_extra_named(extras, extra_labels, "фотограф") else "Нет",
+        "need_makeuproom": "Да" if has_extra_named(extras, extra_labels, "гример") else "Нет",
     }
 
 

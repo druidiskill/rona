@@ -162,6 +162,7 @@ def get_admin_services_keyboard() -> str:
     keyboard = Keyboard(one_time=False, inline=False)
     keyboard.add(Text("➕ Добавить услугу", payload={"a": "adm_service_add"}), color=KeyboardButtonColor.POSITIVE).row()
     keyboard.add(Text("📋 Список услуг", payload={"a": "adm_services_list"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(Text("📦 Доп. услуги", payload={"a": "adm_extra_services"}), color=KeyboardButtonColor.PRIMARY).row()
     keyboard.add(Text("🔙 Назад", payload={"a": "adm_panel"}), color=KeyboardButtonColor.SECONDARY)
     return keyboard.get_json()
 
@@ -250,6 +251,67 @@ def get_admin_service_extras_keyboard(
         ).row()
     keyboard.add(Text("Готово", payload={"a": "adm_service_extras_done", "m": mode}), color=KeyboardButtonColor.POSITIVE).row()
     keyboard.add(Text("🔙 К редактированию", payload={"a": "adm_service_editor_back"}), color=KeyboardButtonColor.SECONDARY)
+    return keyboard.get_json()
+
+
+def get_admin_extra_services_keyboard() -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(Text("➕ Добавить доп. услугу", payload={"a": "adm_extra_service_add"}), color=KeyboardButtonColor.POSITIVE).row()
+    keyboard.add(Text("📋 Список доп. услуг", payload={"a": "adm_extra_services_list"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(Text("🔙 К услугам", payload={"a": "adm_services"}), color=KeyboardButtonColor.SECONDARY)
+    return keyboard.get_json()
+
+
+def get_admin_extra_services_list_keyboard(extra_services: list) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    for extra_service in extra_services:
+        label = _truncate_label(f"📦 {extra_service.name}")
+        keyboard.add(
+            Text(label, payload={"a": "adm_extra_service_open", "id": extra_service.id}),
+            color=KeyboardButtonColor.PRIMARY,
+        ).row()
+    keyboard.add(Text("🔙 К доп. услугам", payload={"a": "adm_extra_services"}), color=KeyboardButtonColor.SECONDARY)
+    return keyboard.get_json()
+
+
+def get_admin_extra_service_detail_keyboard(extra_service_id: int, is_active: bool) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(
+        Text("✏️ Редактировать", payload={"a": "adm_extra_service_edit", "id": extra_service_id}),
+        color=KeyboardButtonColor.PRIMARY,
+    ).row()
+    keyboard.add(
+        Text(
+            "🗑️ Деактивировать" if is_active else "✅ Активировать",
+            payload={"a": "adm_extra_service_toggle", "id": extra_service_id},
+        ),
+        color=KeyboardButtonColor.NEGATIVE if is_active else KeyboardButtonColor.POSITIVE,
+    ).row()
+    keyboard.add(Text("🔙 К списку доп. услуг", payload={"a": "adm_extra_services_list"}), color=KeyboardButtonColor.SECONDARY)
+    keyboard.add(Text("🔙 К услугам", payload={"a": "adm_services"}), color=KeyboardButtonColor.SECONDARY)
+    return keyboard.get_json()
+
+
+def get_admin_extra_service_editor_keyboard(mode: str, extra_service_id: int | None = None) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(Text("📝 Название", payload={"a": "adm_extra_service_field", "m": mode, "f": "name"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(Text("📄 Описание", payload={"a": "adm_extra_service_field", "m": mode, "f": "description"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(Text("💰 Цена / подпись", payload={"a": "adm_extra_service_field", "m": mode, "f": "price_text"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(Text("🔢 Порядок", payload={"a": "adm_extra_service_field", "m": mode, "f": "sort_order"}), color=KeyboardButtonColor.PRIMARY).row()
+    keyboard.add(
+        Text("✅ Создать" if mode == "add" else "💾 Сохранить", payload={"a": "adm_extra_service_save", "m": mode}),
+        color=KeyboardButtonColor.POSITIVE,
+    ).row()
+    if mode == "edit" and extra_service_id:
+        keyboard.add(Text("🔙 К доп. услуге", payload={"a": "adm_extra_service_open", "id": extra_service_id}), color=KeyboardButtonColor.SECONDARY)
+    else:
+        keyboard.add(Text("🔙 К доп. услугам", payload={"a": "adm_extra_services"}), color=KeyboardButtonColor.SECONDARY)
+    return keyboard.get_json()
+
+
+def get_admin_extra_service_back_keyboard() -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(Text("↩️ К редактированию", payload={"a": "adm_extra_service_editor_back"}), color=KeyboardButtonColor.SECONDARY)
     return keyboard.get_json()
 
 

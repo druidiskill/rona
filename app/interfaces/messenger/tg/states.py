@@ -28,6 +28,10 @@ class AdminStates(StatesGroup):
     waiting_for_new_service_max_clients = State()
     waiting_for_new_service_duration = State()
     waiting_for_new_service_photos = State()
+    waiting_for_new_extra_service_name = State()
+    waiting_for_new_extra_service_description = State()
+    waiting_for_new_extra_service_price_text = State()
+    waiting_for_new_extra_service_sort_order = State()
     
     # Состояния для редактирования услуги
     waiting_for_edit_service_name = State()
@@ -40,6 +44,10 @@ class AdminStates(StatesGroup):
     waiting_for_edit_service_max_clients = State()
     waiting_for_edit_service_duration = State()
     waiting_for_edit_service_photos = State()
+    waiting_for_edit_extra_service_name = State()
+    waiting_for_edit_extra_service_description = State()
+    waiting_for_edit_extra_service_price_text = State()
+    waiting_for_edit_extra_service_sort_order = State()
     waiting_for_booking_search_query = State()
     waiting_for_faq_question = State()
     waiting_for_faq_answer = State()

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from app.core.modules.booking.extra_services import format_extra_labels
 
 def format_booking_date(date_value) -> str:
     if not date_value:
@@ -28,14 +29,6 @@ def format_booking_guests(guests_value) -> str:
     return str(guests_value)
 
 
-def format_extras_display(extras: list[str]) -> str:
-    extras_labels = {
-        "photographer": "Фотограф",
-        "makeuproom": "Гримерка",
-        "fireplace": "Розжиг камина",
-        "rental": "Прокат: халат и полотенце",
-    }
-    if not extras:
-        return "Нет"
-    return ", ".join(extras_labels.get(extra, extra) for extra in extras)
+def format_extras_display(extras: list, extra_labels: dict | None = None) -> str:
+    return format_extra_labels(extras, extra_labels)
 

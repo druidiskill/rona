@@ -33,7 +33,7 @@ from app.core.modules.admin.service_prompts import (
     get_service_field_prompt,
     get_service_price_menu_text,
 )
-from app.integrations.local.db import service_repo
+from app.integrations.local.db import extra_service_repo, service_repo
 from app.interfaces.messenger.tg.utils.photos import (
     clear_dir,
     count_photos_in_dir,
@@ -180,11 +180,8 @@ async def _show_extras_picker(
     service_data: dict,
     service_id: int | None = None,
 ) -> None:
-    services = await service_repo.get_all()
-    active_services = get_active_extra_services(
-        services,
-        exclude_service_id=service_id if mode == "edit" else None,
-    )
+    services = await extra_service_repo.get_all()
+    active_services = get_active_extra_services(services)
     await _set_editor_state(
         bot,
         message,
@@ -217,7 +214,7 @@ async def _build_edit_service_data(service_id: int) -> dict | None:
     if not service:
         return None
 
-    services = await service_repo.get_all()
+    services = await extra_service_repo.get_all()
     extra_services = _normalize_plus_ids(service.plus_service_ids)
     return {
         "name": service.name,
@@ -500,7 +497,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
         extra_id = int(payload.get("id", 0))
         selected_ids = list(service_data.get("extra_services", []))
         selected_ids, _ = toggle_extra_service(selected_ids, extra_id)
-        services = await service_repo.get_all()
+        services = await extra_service_repo.get_all()
         service_data["extra_services"] = selected_ids
         service_data["extras"] = format_selected_extras(selected_ids, services)
         await _show_extras_picker(bot, message, mode=mode, service_data=service_data, service_id=service_id)
