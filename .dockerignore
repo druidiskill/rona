@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+photostudio.db
+google_calendar_service_account.json
+calendar_properties_primary.json
+calendar_properties_primary.json.token.json
+app/tests/_tmp

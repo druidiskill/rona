@@ -1,0 +1,39 @@
+services:
+  rona:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rona
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Moscow
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: sqlite:////app/data/photostudio.db
+      GOOGLE_CREDENTIALS_FILE: /app/google_calendar_service_account.json
+      GOOGLE_TOKEN_FILE: /app/google_calendar_service_account.json
+    command: ["python", "-m", "app.entrypoints.all"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./photostudio.db:/app/data/photostudio.db
+      - ./app/media:/app/app/media
+      - ./google_calendar_service_account.json:/app/google_calendar_service_account.json:ro
+
+  redis:
+    image: redis:7-alpine
+    container_name: rona-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - rona_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  rona_redis:

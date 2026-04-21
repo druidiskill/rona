@@ -80,6 +80,40 @@ python run_telegram_bot.py
 python run_vk_bot.py
 ```
 
+### Запуск через Docker на Ubuntu
+
+В проект уже добавлены:
+- `Dockerfile`
+- `docker-compose.server.yml`
+- `env.docker.example`
+
+Перед запуском убедитесь, что в корне проекта на сервере есть:
+- `.env`
+- `google_calendar_service_account.json`
+- `photostudio.db`
+- папка `app/media/` при необходимости сохранить локальные фото услуг
+
+Быстрый запуск:
+
+```bash
+cp env.docker.example .env
+# заполните .env своими значениями
+
+docker compose -f docker-compose.server.yml up -d --build
+```
+
+Логи:
+
+```bash
+docker compose -f docker-compose.server.yml logs -f
+```
+
+Остановка:
+
+```bash
+docker compose -f docker-compose.server.yml down
+```
+
 ## 📁 Структура проекта
 
 ```
