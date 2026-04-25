@@ -16,6 +16,10 @@ from app.interfaces.messenger.tg.utils.photos import list_service_photos
 logger = logging.getLogger(__name__)
 
 
+def _chunk_paths(paths: list[Path], chunk_size: int = 10) -> list[list[Path]]:
+    return [paths[index:index + chunk_size] for index in range(0, len(paths), chunk_size)]
+
+
 def _extract_file_id(message: Message) -> str | None:
     photos = getattr(message, "photo", None) or []
     if not photos:
@@ -86,8 +90,6 @@ async def send_service_gallery(message, service, *, caption: str, parse_mode: st
         return []
 
     _, cached_refs = get_platform_photo_refs(service.photo_ids, "tg", all_photo_paths)
-    used_cached_refs = any(path.name in cached_refs for path in gallery_paths)
-
     if len(gallery_paths) == 1:
         gallery_path = gallery_paths[0]
         cached_file_id = cached_refs.get(gallery_path.name)
@@ -117,16 +119,16 @@ async def send_service_gallery(message, service, *, caption: str, parse_mode: st
             await _persist_db_photo_refs(service, all_photo_paths, {gallery_path.name: file_id})
         return [sent_message]
 
-    def _build_media_group(use_cached_refs: bool) -> list[InputMediaPhoto]:
+    def _build_media_group(chunk_paths: list[Path], *, use_cached_refs: bool, chunk_caption: str | None) -> list[InputMediaPhoto]:
         media_group: list[InputMediaPhoto] = []
-        for index, photo_path in enumerate(gallery_paths):
+        for index, photo_path in enumerate(chunk_paths):
             media = cached_refs.get(photo_path.name) if use_cached_refs else None
             media = media or FSInputFile(photo_path)
-            if index == 0:
+            if index == 0 and chunk_caption:
                 media_group.append(
                     InputMediaPhoto(
                         media=media,
-                        caption=caption,
+                        caption=chunk_caption,
                         parse_mode=parse_mode,
                     )
                 )
@@ -134,23 +136,33 @@ async def send_service_gallery(message, service, *, caption: str, parse_mode: st
                 media_group.append(InputMediaPhoto(media=media))
         return media_group
 
-    try:
-        sent_messages = await message.answer_media_group(media=_build_media_group(use_cached_refs=True))
-    except Exception:
-        if not used_cached_refs:
-            raise
-        logger.warning(
-            "Не удалось отправить галерею услуги %s по TG file_id из БД, загружаю локальные файлы",
-            service.id,
-            exc_info=True,
-        )
-        sent_messages = await message.answer_media_group(media=_build_media_group(use_cached_refs=False))
-
+    sent_messages: list[Message] = []
     refs_by_name: dict[str, str] = {}
-    for photo_path, sent_message in zip(gallery_paths, sent_messages):
-        file_id = _extract_file_id(sent_message)
-        if file_id:
-            refs_by_name[photo_path.name] = file_id
+    for chunk_index, chunk_paths in enumerate(_chunk_paths(gallery_paths, chunk_size=10)):
+        chunk_caption = caption if chunk_index == 0 else None
+        chunk_used_cached_refs = any(path.name in cached_refs for path in chunk_paths)
+        try:
+            chunk_sent_messages = await message.answer_media_group(
+                media=_build_media_group(chunk_paths, use_cached_refs=True, chunk_caption=chunk_caption)
+            )
+        except Exception:
+            if not chunk_used_cached_refs:
+                raise
+            logger.warning(
+                "Не удалось отправить галерею услуги %s по TG file_id из БД, загружаю локальные файлы",
+                service.id,
+                exc_info=True,
+            )
+            chunk_sent_messages = await message.answer_media_group(
+                media=_build_media_group(chunk_paths, use_cached_refs=False, chunk_caption=chunk_caption)
+            )
+
+        sent_messages.extend(chunk_sent_messages)
+        for photo_path, sent_message in zip(chunk_paths, chunk_sent_messages):
+            file_id = _extract_file_id(sent_message)
+            if file_id:
+                refs_by_name[photo_path.name] = file_id
+
     await _persist_db_photo_refs(service, all_photo_paths, refs_by_name)
 
     return sent_messages

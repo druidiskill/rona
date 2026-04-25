@@ -19,7 +19,8 @@ from app.core.modules.admin.extra_service_editor import (
     get_extra_service_field_prompt,
     parse_sort_order,
 )
-from app.integrations.local.db import extra_service_repo
+from app.core.modules.admin.service_extras import cleanup_deleted_extra_service
+from app.integrations.local.db import extra_service_repo, service_repo
 from app.interfaces.messenger.vk.auth import is_vk_admin_id
 from app.interfaces.messenger.vk.keyboards import (
     get_admin_extra_service_back_keyboard,
@@ -307,6 +308,25 @@ def register_admin_extra_service_handlers(bot: Bot) -> None:
         extra_service.is_active = not extra_service.is_active
         await extra_service_repo.update(extra_service)
         await _show_extra_service_detail(message, int(payload.get("id", 0)))
+
+    @bot.on.message(payload_contains={"a": "adm_extra_service_delete"})
+    async def admin_extra_service_delete(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        payload = message.get_payload_json() or {}
+        extra_service_id = int(payload.get("id", 0))
+        extra_service = await extra_service_repo.get_by_id(extra_service_id)
+        if not extra_service:
+            await message.answer("Доп. услуга не найдена.", keyboard=get_admin_extra_services_keyboard())
+            return
+        affected_services = await cleanup_deleted_extra_service(service_repo, extra_service_id)
+        await extra_service_repo.delete(extra_service_id)
+        suffix = f"\nУдалена из {affected_services} услуг." if affected_services else ""
+        await message.answer(
+            f"Доп. услуга '{extra_service.name}' удалена.{suffix}",
+            keyboard=get_admin_extra_services_keyboard(),
+        )
 
     @bot.on.message(payload_contains={"a": "adm_extra_service_add"})
     async def admin_extra_service_add(message: Message):

@@ -234,6 +234,63 @@ def get_admin_service_back_keyboard(mode: str, service_id: int | None = None) ->
     return keyboard.get_json()
 
 
+def get_admin_service_photo_management_keyboard(
+    mode: str,
+    has_photos: bool,
+) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(
+        Text("➕ Добавить фото", payload={"a": "adm_service_photo_add", "m": mode}),
+        color=KeyboardButtonColor.POSITIVE,
+    ).row()
+
+    if has_photos:
+        keyboard.add(
+            Text("🗑 Удалить фото", payload={"a": "adm_service_photo_page", "m": mode, "p": 0}),
+            color=KeyboardButtonColor.NEGATIVE,
+        ).row()
+
+    keyboard.add(
+        Text("🔙 Назад", payload={"a": "adm_service_editor_back"}),
+        color=KeyboardButtonColor.SECONDARY,
+    )
+    return keyboard.get_json()
+
+
+def get_admin_service_photo_prompt_keyboard(mode: str) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard.add(
+        Text("🔙 К фото", payload={"a": "adm_service_photos", "m": mode, "p": 0}),
+        color=KeyboardButtonColor.SECONDARY,
+    )
+    return keyboard.get_json()
+
+
+def get_admin_service_photo_delete_keyboard(mode: str, index: int, total: int) -> str:
+    keyboard = Keyboard(one_time=False, inline=False)
+    if index > 0:
+        keyboard.add(
+            Text("⬅️", payload={"a": "adm_service_photo_page", "m": mode, "p": index - 1}),
+            color=KeyboardButtonColor.SECONDARY,
+        )
+    if index < total - 1:
+        keyboard.add(
+            Text("➡️", payload={"a": "adm_service_photo_page", "m": mode, "p": index + 1}),
+            color=KeyboardButtonColor.SECONDARY,
+        )
+    if index > 0 or index < total - 1:
+        keyboard.row()
+    keyboard.add(
+        Text("🗑 Удалить", payload={"a": "adm_service_photo_delete", "m": mode, "i": index}),
+        color=KeyboardButtonColor.NEGATIVE,
+    )
+    keyboard.add(
+        Text("🔙 Назад", payload={"a": "adm_service_photos", "m": mode, "p": 0}),
+        color=KeyboardButtonColor.SECONDARY,
+    )
+    return keyboard.get_json()
+
+
 def get_admin_service_extras_keyboard(
     services: list,
     selected_ids: list[int],
@@ -282,11 +339,12 @@ def get_admin_extra_service_detail_keyboard(extra_service_id: int, is_active: bo
     ).row()
     keyboard.add(
         Text(
-            "🗑️ Деактивировать" if is_active else "✅ Активировать",
+            "⏸️ Деактивировать" if is_active else "✅ Активировать",
             payload={"a": "adm_extra_service_toggle", "id": extra_service_id},
         ),
         color=KeyboardButtonColor.NEGATIVE if is_active else KeyboardButtonColor.POSITIVE,
     ).row()
+    keyboard.add(Text("🗑️ Удалить", payload={"a": "adm_extra_service_delete", "id": extra_service_id}), color=KeyboardButtonColor.NEGATIVE).row()
     keyboard.add(Text("🔙 К списку доп. услуг", payload={"a": "adm_extra_services_list"}), color=KeyboardButtonColor.SECONDARY)
     keyboard.add(Text("🔙 К услугам", payload={"a": "adm_services"}), color=KeyboardButtonColor.SECONDARY)
     return keyboard.get_json()

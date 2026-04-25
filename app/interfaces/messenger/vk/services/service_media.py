@@ -16,6 +16,10 @@ from app.interfaces.messenger.tg.utils.photos import list_service_photos
 logger = logging.getLogger(__name__)
 
 
+def _chunk_paths(paths: list[Path], chunk_size: int = 10) -> list[list[Path]]:
+    return [paths[index:index + chunk_size] for index in range(0, len(paths), chunk_size)]
+
+
 async def _persist_db_photo_refs(service, all_photo_paths: list[Path], refs_by_name: dict[str, str]) -> None:
     if not getattr(service, "id", None) or not refs_by_name:
         return
@@ -57,41 +61,57 @@ async def _upload_local_attachments(message, service_id: int | None, photo_paths
 
 async def send_service_details(message, service, *, text: str, keyboard: str) -> None:
     all_photo_paths = list_service_photos(service.id or 0)
-    visible_photo_paths = all_photo_paths[:10]
-    if not visible_photo_paths:
+    if not all_photo_paths:
         await message.answer(text, keyboard=keyboard)
         return
 
     _, cached_refs = get_platform_photo_refs(service.photo_ids, "vk", all_photo_paths)
-    can_use_cached = all(photo_path.name in cached_refs for photo_path in visible_photo_paths)
+    sent_any = False
 
-    if can_use_cached:
-        try:
-            await message.ctx_api.messages.send(
-                peer_id=message.peer_id,
-                random_id=0,
-                message=text,
-                attachment=",".join(cached_refs[path.name] for path in visible_photo_paths),
-                keyboard=keyboard,
-            )
-            return
-        except Exception:
-            logger.warning(
-                "Не удалось отправить фото услуги %s в VK по attachment id из БД, загружаю локальные файлы",
-                service.id,
-                exc_info=True,
-            )
+    for chunk_index, chunk_paths in enumerate(_chunk_paths(all_photo_paths, chunk_size=10)):
+        is_first_chunk = chunk_index == 0
+        message_text = text if is_first_chunk else ""
+        message_keyboard = keyboard if is_first_chunk else None
+        can_use_cached = all(photo_path.name in cached_refs for photo_path in chunk_paths)
 
-    attachments, refs_by_name = await _upload_local_attachments(message, service.id, visible_photo_paths)
-    if attachments:
+        if can_use_cached:
+            try:
+                kwargs = {
+                    "peer_id": message.peer_id,
+                    "random_id": 0,
+                    "message": message_text,
+                    "attachment": ",".join(cached_refs[path.name] for path in chunk_paths),
+                }
+                if message_keyboard is not None:
+                    kwargs["keyboard"] = message_keyboard
+                await message.ctx_api.messages.send(**kwargs)
+                sent_any = True
+                continue
+            except Exception:
+                logger.warning(
+                    "Не удалось отправить фото услуги %s в VK по attachment id из БД, загружаю локальные файлы",
+                    service.id,
+                    exc_info=True,
+                )
+
+        attachments, refs_by_name = await _upload_local_attachments(message, service.id, chunk_paths)
+        if not attachments:
+            if is_first_chunk and not sent_any:
+                await message.answer(text, keyboard=keyboard)
+                return
+            continue
+
         await _persist_db_photo_refs(service, all_photo_paths, refs_by_name)
-        await message.ctx_api.messages.send(
-            peer_id=message.peer_id,
-            random_id=0,
-            message=text,
-            attachment=",".join(attachments),
-            keyboard=keyboard,
-        )
-        return
+        kwargs = {
+            "peer_id": message.peer_id,
+            "random_id": 0,
+            "message": message_text,
+            "attachment": ",".join(attachments),
+        }
+        if message_keyboard is not None:
+            kwargs["keyboard"] = message_keyboard
+        await message.ctx_api.messages.send(**kwargs)
+        sent_any = True
 
-    await message.answer(text, keyboard=keyboard)
+    if not sent_any:
+        await message.answer(text, keyboard=keyboard)

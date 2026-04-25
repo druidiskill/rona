@@ -16,8 +16,9 @@ from app.core.modules.admin.extra_service_editor import (
     get_extra_service_field_prompt,
     parse_sort_order,
 )
+from app.core.modules.admin.service_extras import cleanup_deleted_extra_service
 from app.core.modules.admin.service_editor_state import update_nested_state_data
-from app.integrations.local.db import extra_service_repo
+from app.integrations.local.db import extra_service_repo, service_repo
 from app.interfaces.messenger.tg.keyboards import (
     get_extra_service_edit_keyboard,
     get_extra_service_editor_keyboard,
@@ -109,7 +110,7 @@ async def show_extra_service_edit(callback: CallbackQuery, is_admin: bool):
     )
 
 
-async def delete_extra_service(callback: CallbackQuery, is_admin: bool):
+async def toggle_extra_service_active(callback: CallbackQuery, is_admin: bool):
     if not is_admin:
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
@@ -120,13 +121,14 @@ async def delete_extra_service(callback: CallbackQuery, is_admin: bool):
         await callback.answer("Доп. услуга не найдена", show_alert=True)
         return
 
-    extra_service.is_active = False
+    extra_service.is_active = not extra_service.is_active
     await extra_service_repo.update(extra_service)
-    await callback.answer(f"✅ Доп. услуга '{extra_service.name}' деактивирована", show_alert=True)
+    status_text = "активирована" if extra_service.is_active else "деактивирована"
+    await callback.answer(f"✅ Доп. услуга '{extra_service.name}' {status_text}", show_alert=True)
     await show_extra_services_management(callback, is_admin)
 
 
-async def activate_extra_service(callback: CallbackQuery, is_admin: bool):
+async def remove_extra_service(callback: CallbackQuery, is_admin: bool):
     if not is_admin:
         await callback.answer("У вас нет прав администратора", show_alert=True)
         return
@@ -137,9 +139,13 @@ async def activate_extra_service(callback: CallbackQuery, is_admin: bool):
         await callback.answer("Доп. услуга не найдена", show_alert=True)
         return
 
-    extra_service.is_active = True
-    await extra_service_repo.update(extra_service)
-    await callback.answer(f"✅ Доп. услуга '{extra_service.name}' активирована", show_alert=True)
+    affected_services = await cleanup_deleted_extra_service(service_repo, extra_service_id)
+    await extra_service_repo.delete(extra_service_id)
+    suffix = f" Удалена из {affected_services} услуг." if affected_services else ""
+    await callback.answer(
+        f"✅ Доп. услуга '{extra_service.name}' удалена.{suffix}",
+        show_alert=True,
+    )
     await show_extra_services_management(callback, is_admin)
 
 
@@ -408,8 +414,8 @@ def register_extra_service_management_handlers(dp: Dispatcher):
     dp.callback_query.register(show_extra_services_management, F.data == "admin_extra_services")
     dp.callback_query.register(show_extra_services_list, F.data == "edit_extra_service")
     dp.callback_query.register(show_extra_service_edit, F.data.regexp(r"^edit_extra_service_\d+$"))
-    dp.callback_query.register(delete_extra_service, F.data.startswith("delete_extra_service_"))
-    dp.callback_query.register(activate_extra_service, F.data.startswith("activate_extra_service_"))
+    dp.callback_query.register(toggle_extra_service_active, F.data.startswith("toggle_extra_service_active_"))
+    dp.callback_query.register(remove_extra_service, F.data.startswith("remove_extra_service_"))
 
     dp.callback_query.register(start_add_extra_service, F.data == "add_extra_service")
     dp.callback_query.register(start_edit_extra_service_new, F.data.startswith("edit_extra_service_new_"))

@@ -241,6 +241,18 @@ class ExtraServiceRepository:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def delete(self, extra_service_id: int) -> bool:
+        async with aiosqlite.connect(self.db_manager.db_path) as db:
+            cursor = await db.execute(
+                """
+                DELETE FROM extra_services
+                WHERE id = ?
+                """,
+                (extra_service_id,),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
     def _row_to_extra_service(self, row) -> ExtraService:
         return ExtraService(
             id=row[0],

@@ -9,12 +9,12 @@ from typing import Awaitable, Callable
 async def save_service_photo(
     message,
     target_dir: str | Path,
-    save_photo_func: Callable[[object, str | Path], Awaitable[None]],
+    save_photo_func: Callable[[object, str | Path], Awaitable[object]],
     count_photos_func: Callable[[str | Path], int],
     clear_dir_func: Callable[[str | Path], None] | None = None,
     reset_before_save: bool = False,
 ) -> int:
-    """Save one uploaded photo and return current count in target dir."""
+    """Save one or many uploaded photos and return current count in target dir."""
     if reset_before_save and clear_dir_func is not None:
         clear_dir_func(target_dir)
     await save_photo_func(message, target_dir)

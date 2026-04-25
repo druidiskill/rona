@@ -1,5 +1,8 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from pathlib import Path
 from typing import List
+
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+
 from app.integrations.local.db.models import Service, TimeSlot
 from datetime import datetime, timedelta
 from app.core.modules.booking.form_config import get_booking_field_label
@@ -298,14 +301,15 @@ def get_extra_services_list_keyboard(extra_services: list) -> InlineKeyboardMark
 
 
 def get_extra_service_edit_keyboard(extra_service_id: int, is_active: bool = True) -> InlineKeyboardMarkup:
-    status_button = (
-        InlineKeyboardButton(text="🗑️ Деактивировать", callback_data=f"delete_extra_service_{extra_service_id}")
+    toggle_button = (
+        InlineKeyboardButton(text="⏸️ Деактивировать", callback_data=f"toggle_extra_service_active_{extra_service_id}")
         if is_active
-        else InlineKeyboardButton(text="✅ Активировать", callback_data=f"activate_extra_service_{extra_service_id}")
+        else InlineKeyboardButton(text="✅ Активировать", callback_data=f"toggle_extra_service_active_{extra_service_id}")
     )
     keyboard = [
         [InlineKeyboardButton(text="🔧 Редактировать", callback_data=f"edit_extra_service_new_{extra_service_id}")],
-        [status_button],
+        [toggle_button],
+        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"remove_extra_service_{extra_service_id}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_extra_services")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -645,6 +649,57 @@ def get_edit_service_main_keyboard():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_services_management")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_service_photo_management_keyboard(
+    mode: str,
+    photo_paths: List[Path],
+) -> InlineKeyboardMarkup:
+    back_callback = "add_service_main" if mode == "add" else "show_edit_service_main"
+    add_callback = "add_service_photo_add" if mode == "add" else "edit_service_photo_add"
+    preview_callback = "add_service_photo_page_0" if mode == "add" else "edit_service_photo_page_0"
+
+    keyboard: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="➕ Добавить фото", callback_data=add_callback)],
+    ]
+
+    if photo_paths:
+        keyboard.append([InlineKeyboardButton(text="🗑 Удалить фото", callback_data=preview_callback)])
+
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback)])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_service_photo_delete_keyboard(mode: str, index: int, total: int) -> InlineKeyboardMarkup:
+    back_callback = "add_service_photos" if mode == "add" else "edit_service_photos"
+    page_prefix = "add_service_photo_page" if mode == "add" else "edit_service_photo_page"
+    delete_prefix = "add_service_photo_delete" if mode == "add" else "edit_service_photo_delete"
+
+    keyboard: list[list[InlineKeyboardButton]] = []
+    nav_row: list[InlineKeyboardButton] = []
+    if index > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"{page_prefix}_{index - 1}"))
+    if index < total - 1:
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"{page_prefix}_{index + 1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+
+    keyboard.append(
+        [
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"{delete_prefix}_{index}"),
+            InlineKeyboardButton(text="🔙 Назад", callback_data=back_callback),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_service_photo_prompt_keyboard(mode: str) -> InlineKeyboardMarkup:
+    callback_data = "add_service_photos" if mode == "add" else "edit_service_photos"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К фото", callback_data=callback_data)],
+        ]
+    )
+
 
 def get_booking_keyboard(service_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для бронирования услуги"""

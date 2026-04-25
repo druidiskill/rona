@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import re
 from enum import Enum
 
-from vkbottle import BaseStateGroup
+from vkbottle import BaseStateGroup, PhotoMessageUploader
 from vkbottle.bot import Bot, Message
 
 from app.core.modules.admin.service_crud import (
@@ -25,6 +25,11 @@ from app.core.modules.admin.service_extras import (
     get_active_extra_services,
     toggle_extra_service,
 )
+from app.core.modules.admin.service_photo_menu import (
+    build_service_photo_delete_text,
+    build_service_photo_menu_text,
+    get_service_photo_preview,
+)
 from app.core.modules.admin.service_photos import finalize_service_photo_dir, save_service_photo
 from app.core.modules.admin.service_prompts import (
     ADMIN_DENIED_TEXT,
@@ -37,8 +42,10 @@ from app.integrations.local.db import extra_service_repo, service_repo
 from app.interfaces.messenger.tg.utils.photos import (
     clear_dir,
     count_photos_in_dir,
+    delete_photo_by_index,
     get_service_dir,
     get_temp_dir,
+    list_photo_files,
     move_dir_contents,
 )
 from app.interfaces.messenger.vk.auth import is_vk_admin_id
@@ -46,11 +53,14 @@ from app.interfaces.messenger.vk.keyboards import (
     get_admin_service_back_keyboard,
     get_admin_service_editor_keyboard,
     get_admin_service_extras_keyboard,
+    get_admin_service_photo_delete_keyboard,
+    get_admin_service_photo_management_keyboard,
+    get_admin_service_photo_prompt_keyboard,
     get_admin_service_price_keyboard,
     get_admin_service_detail_keyboard,
     get_admin_services_keyboard,
 )
-from app.interfaces.messenger.vk.utils.photos import save_message_photo
+from app.interfaces.messenger.vk.utils.photos import save_message_photos
 
 
 class VkAdminServiceState(BaseStateGroup, Enum):
@@ -209,6 +219,114 @@ async def _show_extras_picker(
     )
 
 
+def _get_photo_dir(mode: str, message: Message, service_id: int | None) -> object:
+    return get_temp_dir(message.from_id) if mode == "add" else get_service_dir(int(service_id or 0))
+
+
+async def _show_photo_manager(
+    bot: Bot,
+    message: Message,
+    *,
+    mode: str,
+    service_data: dict,
+    service_id: int | None = None,
+) -> None:
+    photo_paths = list_photo_files(_get_photo_dir(mode, message, service_id))
+    service_data["photos_count"] = len(photo_paths)
+    service_data["photo_ids"] = None
+    if mode == "add":
+        if photo_paths:
+            service_data["temp_photos_dir"] = str(get_temp_dir(message.from_id))
+        else:
+            service_data.pop("temp_photos_dir", None)
+
+    await _set_editor_state(
+        bot,
+        message,
+        VkAdminServiceState.service_editor,
+        mode=mode,
+        service_data=service_data,
+        service_id=service_id,
+    )
+    await message.answer(
+        _plain(build_service_photo_menu_text(photo_paths, mode=mode)),
+        keyboard=get_admin_service_photo_management_keyboard(mode, bool(photo_paths)),
+    )
+
+
+async def _show_photo_delete_preview(
+    bot: Bot,
+    message: Message,
+    *,
+    mode: str,
+    service_data: dict,
+    service_id: int | None = None,
+    index: int,
+) -> None:
+    photo_paths = list_photo_files(_get_photo_dir(mode, message, service_id))
+    service_data["photos_count"] = len(photo_paths)
+    service_data["photo_ids"] = None
+    if mode == "add":
+        if photo_paths:
+            service_data["temp_photos_dir"] = str(get_temp_dir(message.from_id))
+        else:
+            service_data.pop("temp_photos_dir", None)
+
+    await _set_editor_state(
+        bot,
+        message,
+        VkAdminServiceState.service_editor,
+        mode=mode,
+        service_data=service_data,
+        service_id=service_id,
+    )
+
+    photo_path, index, total = get_service_photo_preview(photo_paths, index)
+    if not photo_path:
+        await _show_photo_manager(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+        )
+        return
+
+    text = _plain(build_service_photo_delete_text(photo_paths, index))
+    keyboard = get_admin_service_photo_delete_keyboard(mode, index, total)
+    try:
+        attachment = await PhotoMessageUploader(message.ctx_api).upload(
+            str(photo_path),
+            peer_id=message.peer_id,
+        )
+        await message.answer(text, attachment=attachment, keyboard=keyboard)
+    except Exception:
+        await message.answer(text, keyboard=keyboard)
+
+
+async def _show_photo_prompt(
+    bot: Bot,
+    message: Message,
+    *,
+    mode: str,
+    service_data: dict,
+    service_id: int | None = None,
+) -> None:
+    await _set_editor_state(
+        bot,
+        message,
+        VkAdminServiceState.waiting_for_service_photo,
+        mode=mode,
+        service_data=service_data,
+        service_id=service_id,
+        field="photos",
+    )
+    await message.answer(
+        _plain(get_service_field_prompt(mode, "photos")),
+        keyboard=get_admin_service_photo_prompt_keyboard(mode),
+    )
+
+
 async def _build_edit_service_data(service_id: int) -> dict | None:
     service = await service_repo.get_by_id(service_id)
     if not service:
@@ -228,7 +346,7 @@ async def _build_edit_service_data(service_id: int) -> dict | None:
         "max_clients": service.max_num_clients,
         "min_duration": service.min_duration_minutes,
         "step_duration": service.duration_step_minutes,
-        "duration": f"{service.min_duration_minutes} мин (шаг {service.duration_step_minutes})",
+        "duration": f"{service.min_duration_minutes} РјРёРЅ (С€Р°Рі {service.duration_step_minutes})",
         "extra_services": extra_services,
         "extras": format_selected_extras(extra_services, services),
         "photos_count": count_photos_in_dir(get_service_dir(service_id)),
@@ -245,7 +363,7 @@ async def _start_add_service(bot: Bot, message: Message) -> None:
 async def _start_edit_service(bot: Bot, message: Message, service_id: int) -> None:
     service_data = await _build_edit_service_data(service_id)
     if not service_data:
-        await message.answer("Услуга не найдена.", keyboard=get_admin_services_keyboard())
+        await message.answer("РЈСЃР»СѓРіР° РЅРµ РЅР°Р№РґРµРЅР°.", keyboard=get_admin_services_keyboard())
         return
     await _show_editor_main(
         bot,
@@ -260,13 +378,13 @@ async def _save_service_field_input(bot: Bot, message: Message) -> None:
     mode, service_data, service_id, field = _get_editor_context(message)
     if not mode or not field:
         await bot.state_dispenser.delete(message.peer_id)
-        await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+        await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
         return
 
     raw_text = (message.text or "").strip()
     if not raw_text:
         await message.answer(
-            "Введите значение текстом.",
+            "Р’РІРµРґРёС‚Рµ Р·РЅР°С‡РµРЅРёРµ С‚РµРєСЃС‚РѕРј.",
             keyboard=get_admin_service_back_keyboard(mode, service_id),
         )
         return
@@ -292,13 +410,13 @@ async def _save_service_field_input(bot: Bot, message: Message) -> None:
             min_duration, step_duration = parse_duration_pair(raw_text)
             service_data["min_duration"] = min_duration
             service_data["step_duration"] = step_duration
-            service_data["duration"] = f"{min_duration} мин (шаг {step_duration})"
+            service_data["duration"] = f"{min_duration} РјРёРЅ (С€Р°Рі {step_duration})"
         else:
-            await message.answer("Поле не поддерживается.", keyboard=get_admin_services_keyboard())
+            await message.answer("РџРѕР»Рµ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ.", keyboard=get_admin_services_keyboard())
             return
     except ValueError:
         await message.answer(
-            "Неверный формат значения.",
+            "РќРµРІРµСЂРЅС‹Р№ С„РѕСЂРјР°С‚ Р·РЅР°С‡РµРЅРёСЏ.",
             keyboard=get_admin_service_back_keyboard(mode, service_id),
         )
         return
@@ -316,34 +434,35 @@ async def _save_service_photo_input(bot: Bot, message: Message) -> None:
     mode, service_data, service_id, _ = _get_editor_context(message)
     if not mode:
         await bot.state_dispenser.delete(message.peer_id)
-        await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+        await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
         return
 
-    target_dir = get_temp_dir(message.from_id) if mode == "add" else get_service_dir(int(service_id or 0))
+    target_dir = _get_photo_dir(mode, message, service_id)
     try:
         photos_count = await save_service_photo(
             message,
             target_dir,
-            save_photo_func=save_message_photo,
+            save_photo_func=save_message_photos,
             count_photos_func=count_photos_in_dir,
-            clear_dir_func=clear_dir if mode == "edit" else None,
-            reset_before_save=mode == "edit" and not service_data.get("photos_updated"),
         )
     except Exception:
         await message.answer(
-            "Не удалось сохранить фотографию. Отправьте фото ещё раз.",
-            keyboard=get_admin_service_back_keyboard(mode, service_id),
+            "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ С„РѕС‚РѕРіСЂР°С„РёСЋ. РћС‚РїСЂР°РІСЊС‚Рµ С„РѕС‚Рѕ РµС‰С‘ СЂР°Р·.",
+            keyboard=get_admin_service_photo_prompt_keyboard(mode),
         )
         return
 
     service_data["photos_count"] = photos_count
+    service_data["photo_ids"] = None
     if mode == "add":
         service_data["temp_photos_dir"] = str(target_dir)
     else:
         service_data["photos_updated"] = True
+        if service_id:
+            await service_repo.update_photo_ids(int(service_id), None)
 
-    await message.answer(f"✅ Фотография добавлена. Всего: {photos_count}")
-    await _show_editor_main(
+    await message.answer(f"вњ… Р¤РѕС‚Рѕ СЃРѕС…СЂР°РЅРµРЅС‹. Р’СЃРµРіРѕ: {photos_count}")
+    await _show_photo_manager(
         bot,
         message,
         mode=mode,
@@ -351,18 +470,17 @@ async def _save_service_photo_input(bot: Bot, message: Message) -> None:
         service_id=service_id,
     )
 
-
 async def _save_service(bot: Bot, message: Message) -> None:
     mode, service_data, service_id, _ = _get_editor_context(message)
     if not mode:
         await bot.state_dispenser.delete(message.peer_id)
-        await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+        await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
         return
 
     missing_fields = get_missing_service_field_labels(service_data)
     if missing_fields:
         await message.answer(
-            f"❌ Заполните обязательные поля: {', '.join(missing_fields)}",
+            f"вќЊ Р—Р°РїРѕР»РЅРёС‚Рµ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РїРѕР»СЏ: {', '.join(missing_fields)}",
             keyboard=get_admin_service_editor_keyboard(mode, service_id),
         )
         return
@@ -379,27 +497,27 @@ async def _save_service(bot: Bot, message: Message) -> None:
             summary = build_service_save_summary(
                 service,
                 service_data,
-                title="Услуга успешно создана!",
+                title="РЈСЃР»СѓРіР° СѓСЃРїРµС€РЅРѕ СЃРѕР·РґР°РЅР°!",
                 service_id=created_id,
             )
         else:
             if not service_id:
-                await message.answer("Не удалось определить услугу.", keyboard=get_admin_services_keyboard())
+                await message.answer("РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СѓСЃР»СѓРіСѓ.", keyboard=get_admin_services_keyboard())
                 return
             service = build_service_model(service_data, service_id=service_id)
             service.is_active = bool(service_data.get("is_active", True))
             success = await service_repo.update(service)
             if not success:
-                await message.answer("Не удалось обновить услугу.", keyboard=get_admin_services_keyboard())
+                await message.answer("РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ СѓСЃР»СѓРіСѓ.", keyboard=get_admin_services_keyboard())
                 return
             summary = build_service_save_summary(
                 service,
                 service_data,
-                title="Услуга успешно обновлена!",
+                title="РЈСЃР»СѓРіР° СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅР°!",
                 service_id=service_id,
             )
     except Exception as exc:
-        await message.answer(f"Ошибка сохранения услуги: {exc}", keyboard=get_admin_services_keyboard())
+        await message.answer(f"РћС€РёР±РєР° СЃРѕС…СЂР°РЅРµРЅРёСЏ СѓСЃР»СѓРіРё: {exc}", keyboard=get_admin_services_keyboard())
         return
 
     await bot.state_dispenser.delete(message.peer_id)
@@ -432,7 +550,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         await _show_price_menu(bot, message, mode=mode, service_data=service_data, service_id=service_id)
 
@@ -443,7 +561,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         await _show_editor_main(bot, message, mode=mode, service_data=service_data, service_id=service_id)
 
@@ -454,15 +572,23 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         payload = message.get_payload_json() or {}
         field = str(payload.get("f") or "")
-        state = VkAdminServiceState.waiting_for_service_photo if field == "photos" else VkAdminServiceState.waiting_for_service_text
+        if field == "photos":
+            await _show_photo_manager(
+                bot,
+                message,
+                mode=mode,
+                service_data=service_data,
+                service_id=service_id,
+            )
+            return
         await _set_editor_state(
             bot,
             message,
-            state,
+            VkAdminServiceState.waiting_for_service_text,
             mode=mode,
             service_data=service_data,
             service_id=service_id,
@@ -473,6 +599,123 @@ def register_admin_service_handlers(bot: Bot) -> None:
             keyboard=get_admin_service_back_keyboard(mode, service_id),
         )
 
+    @bot.on.message(payload_contains={"a": "adm_service_photos"})
+    async def admin_service_photos(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        mode, service_data, service_id, _ = _get_editor_context(message)
+        if not mode:
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
+            return
+        await _show_photo_manager(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+        )
+
+    @bot.on.message(payload_contains={"a": "adm_service_photo_add"})
+    async def admin_service_photo_add(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        mode, service_data, service_id, _ = _get_editor_context(message)
+        if not mode:
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
+            return
+        await _show_photo_prompt(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+        )
+
+    @bot.on.message(payload_contains={"a": "adm_service_photo_page"})
+    async def admin_service_photo_page(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        mode, service_data, service_id, _ = _get_editor_context(message)
+        if not mode:
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
+            return
+        payload = message.get_payload_json() or {}
+        index = int(payload.get("p", 0) or 0)
+        await _show_photo_delete_preview(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+            index=index,
+        )
+
+    @bot.on.message(payload_contains={"a": "adm_service_photo_delete"})
+    async def admin_service_photo_delete(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        mode, service_data, service_id, _ = _get_editor_context(message)
+        if not mode:
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
+            return
+        payload = message.get_payload_json() or {}
+        index = int(payload.get("i", 0) or 0)
+        deleted = delete_photo_by_index(_get_photo_dir(mode, message, service_id), index)
+        if not deleted:
+            await message.answer("Фото не найдено.")
+            return
+        service_data["photo_ids"] = None
+        if mode == "edit" and service_id:
+            service_data["photos_updated"] = True
+            await service_repo.update_photo_ids(int(service_id), None)
+        await message.answer("Фото удалено.")
+        remaining_paths = list_photo_files(_get_photo_dir(mode, message, service_id))
+        if remaining_paths:
+            await _show_photo_delete_preview(
+                bot,
+                message,
+                mode=mode,
+                service_data=service_data,
+                service_id=service_id,
+                index=min(index, len(remaining_paths) - 1),
+            )
+            return
+
+        await _show_photo_manager(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+        )
+
+    @bot.on.message(payload_contains={"a": "adm_service_photo_clear"})
+    async def admin_service_photo_clear(message: Message):
+        if not await _is_admin(message):
+            await _deny(message)
+            return
+        mode, service_data, service_id, _ = _get_editor_context(message)
+        if not mode:
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
+            return
+        clear_dir(_get_photo_dir(mode, message, service_id))
+        service_data["photo_ids"] = None
+        if mode == "edit" and service_id:
+            service_data["photos_updated"] = True
+            await service_repo.update_photo_ids(int(service_id), None)
+        await message.answer("Все фото удалены.")
+        await _show_photo_manager(
+            bot,
+            message,
+            mode=mode,
+            service_data=service_data,
+            service_id=service_id,
+        )
+
     @bot.on.message(payload_contains={"a": "adm_service_extras"})
     async def admin_service_extras(message: Message):
         if not await _is_admin(message):
@@ -480,7 +723,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         await _show_extras_picker(bot, message, mode=mode, service_data=service_data, service_id=service_id)
 
@@ -491,7 +734,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         payload = message.get_payload_json() or {}
         extra_id = int(payload.get("id", 0))
@@ -509,7 +752,7 @@ def register_admin_service_handlers(bot: Bot) -> None:
             return
         mode, service_data, service_id, _ = _get_editor_context(message)
         if not mode:
-            await message.answer("Сессия редактирования устарела.", keyboard=get_admin_services_keyboard())
+            await message.answer("РЎРµСЃСЃРёСЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃС‚Р°СЂРµР»Р°.", keyboard=get_admin_services_keyboard())
             return
         await _show_editor_main(bot, message, mode=mode, service_data=service_data, service_id=service_id)
 
@@ -533,3 +776,4 @@ def register_admin_service_handlers(bot: Bot) -> None:
             await _deny(message)
             return
         await _save_service_photo_input(bot, message)
+

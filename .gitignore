@@ -15,3 +15,6 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 diagnose_vk_ssl.py
+*.cmd
+*.ps1
+logs.txt

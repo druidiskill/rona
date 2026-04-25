@@ -1,11 +1,13 @@
-from aiogram import Dispatcher, F
-from aiogram.types import CallbackQuery, Message
+﻿from aiogram import Dispatcher, F
+from aiogram.types import CallbackQuery, FSInputFile, InputMediaPhoto, Message
 from aiogram.fsm.context import FSMContext
 
 from app.interfaces.messenger.tg.keyboards import (
     get_edit_service_main_keyboard, get_edit_service_price_keyboard,
     get_add_service_extras_keyboard, get_services_management_keyboard,
-    get_existing_services_keyboard
+    get_existing_services_keyboard, get_service_photo_delete_keyboard,
+    get_service_photo_management_keyboard,
+    get_service_photo_prompt_keyboard,
 )
 from app.interfaces.messenger.tg.states import AdminStates
 from app.integrations.local.db import extra_service_repo, service_repo
@@ -28,34 +30,41 @@ from app.core.modules.admin.service_prompts import (
     get_service_field_prompt,
     get_service_price_menu_text,
 )
+from app.core.modules.admin.service_photo_menu import (
+    build_service_photo_delete_text,
+    build_service_photo_menu_text,
+    get_service_photo_preview,
+)
 from app.core.modules.admin.service_photos import save_service_photo
 from app.interfaces.messenger.tg.utils.photos import (
     get_service_dir,
     count_photos_in_dir,
     clear_dir,
+    delete_photo_by_index,
+    list_photo_files,
     save_message_photo,
 )
 
 async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Начало редактирования услуги с новым интерфейсом"""
+    """РќР°С‡Р°Р»Рѕ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃР»СѓРіРё СЃ РЅРѕРІС‹Рј РёРЅС‚РµСЂС„РµР№СЃРѕРј"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
     
-    # Извлекаем ID услуги из callback_data
+    # РР·РІР»РµРєР°РµРј ID СѓСЃР»СѓРіРё РёР· callback_data
     service_id = int(callback.data.split("_")[-1])
     
-    # Получаем услугу из базы данных
+    # РџРѕР»СѓС‡Р°РµРј СѓСЃР»СѓРіСѓ РёР· Р±Р°Р·С‹ РґР°РЅРЅС‹С…
     service = await service_repo.get_by_id(service_id)
     if not service:
-        await callback.answer("❌ Услуга не найдена", show_alert=True)
+        await callback.answer("вќЊ РЈСЃР»СѓРіР° РЅРµ РЅР°Р№РґРµРЅР°", show_alert=True)
         return
     
-    # Сохраняем ID услуги в состоянии
+    # РЎРѕС…СЂР°РЅСЏРµРј ID СѓСЃР»СѓРіРё РІ СЃРѕСЃС‚РѕСЏРЅРёРё
     await state.update_data(edit_service_id=service_id)
     
-    # Конвертируем данные услуги в формат для редактирования
-    # Аккуратно нормализуем plus_service_ids и photo_ids, т.к. они могут быть как строкой CSV, так и числом/None
+    # РљРѕРЅРІРµСЂС‚РёСЂСѓРµРј РґР°РЅРЅС‹Рµ СѓСЃР»СѓРіРё РІ С„РѕСЂРјР°С‚ РґР»СЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ
+    # РђРєРєСѓСЂР°С‚РЅРѕ РЅРѕСЂРјР°Р»РёР·СѓРµРј plus_service_ids Рё photo_ids, С‚.Рє. РѕРЅРё РјРѕРіСѓС‚ Р±С‹С‚СЊ РєР°Рє СЃС‚СЂРѕРєРѕР№ CSV, С‚Р°Рє Рё С‡РёСЃР»РѕРј/None
     def _normalize_plus_ids(value):
         if value is None:
             return []
@@ -91,14 +100,14 @@ async def start_edit_service_new(callback: CallbackQuery, state: FSMContext, is_
         'photo_ids': service.photo_ids,
     }
     
-    # Сохраняем данные в состоянии
+    # РЎРѕС…СЂР°РЅСЏРµРј РґР°РЅРЅС‹Рµ РІ СЃРѕСЃС‚РѕСЏРЅРёРё
     await state.update_data(edit_service_data=service_data)
     
-    # Показываем главное меню редактирования
+    # РџРѕРєР°Р·С‹РІР°РµРј РіР»Р°РІРЅРѕРµ РјРµРЅСЋ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ
     await show_edit_service_main(callback, state, is_admin)
 
 async def show_edit_service_main(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Показ главного меню редактирования услуги."""
+    """РџРѕРєР°Р· РіР»Р°РІРЅРѕРіРѕ РјРµРЅСЋ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃР»СѓРіРё."""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -111,8 +120,101 @@ async def show_edit_service_main(callback: CallbackQuery, state: FSMContext, is_
         parse_mode="HTML"
     )
 
+async def _show_edit_service_photo_manager_for_callback(
+    callback: CallbackQuery,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    service_data = data.get("edit_service_data", {})
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await callback.answer("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СѓСЃР»СѓРіСѓ", show_alert=True)
+        return
+
+    photo_paths = list_photo_files(get_service_dir(int(service_id)))
+    service_data["photos_count"] = len(photo_paths)
+    service_data["photo_ids"] = None
+    await state.update_data(edit_service_data=service_data)
+    text = build_service_photo_menu_text(photo_paths, mode="edit")
+    keyboard = get_service_photo_management_keyboard("edit", photo_paths)
+    if getattr(callback.message, "photo", None):
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        return
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+async def _show_edit_service_photo_manager_for_message(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    service_data = data.get("edit_service_data", {})
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await message.answer("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СѓСЃР»СѓРіСѓ")
+        return
+
+    photo_paths = list_photo_files(get_service_dir(int(service_id)))
+    service_data["photos_count"] = len(photo_paths)
+    service_data["photo_ids"] = None
+    await state.update_data(edit_service_data=service_data)
+    await message.answer(
+        build_service_photo_menu_text(photo_paths, mode="edit"),
+        reply_markup=get_service_photo_management_keyboard("edit", photo_paths),
+        parse_mode="HTML",
+    )
+
+
+async def _show_edit_service_photo_delete_preview(
+    callback: CallbackQuery,
+    state: FSMContext,
+    *,
+    index: int,
+) -> None:
+    data = await state.get_data()
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await callback.answer("❌ Не удалось определить услугу", show_alert=True)
+        return
+
+    photo_paths = list_photo_files(get_service_dir(int(service_id)))
+    photo_path, index, total = get_service_photo_preview(photo_paths, index)
+    if not photo_path:
+        await _show_edit_service_photo_manager_for_callback(callback, state)
+        return
+
+    caption = build_service_photo_delete_text(photo_paths, index)
+    keyboard = get_service_photo_delete_keyboard("edit", index, total)
+    if getattr(callback.message, "photo", None):
+        await callback.message.edit_media(
+            media=InputMediaPhoto(
+                media=FSInputFile(photo_path),
+                caption=caption,
+                parse_mode="HTML",
+            ),
+            reply_markup=keyboard,
+        )
+        return
+
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer_photo(
+        photo=FSInputFile(photo_path),
+        caption=caption,
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+
 async def edit_service_name_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования названия услуги"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РЅР°Р·РІР°РЅРёСЏ СѓСЃР»СѓРіРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -124,7 +226,7 @@ async def edit_service_name_callback(callback: CallbackQuery, state: FSMContext,
     await state.set_state(AdminStates.waiting_for_edit_service_name)
 
 async def edit_service_description_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования описания услуги"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РѕРїРёСЃР°РЅРёСЏ СѓСЃР»СѓРіРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -136,7 +238,7 @@ async def edit_service_description_callback(callback: CallbackQuery, state: FSMC
     await state.set_state(AdminStates.waiting_for_edit_service_description)
 
 async def edit_service_price_menu_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик меню цен для редактирования"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє РјРµРЅСЋ С†РµРЅ РґР»СЏ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -148,7 +250,7 @@ async def edit_service_price_menu_callback(callback: CallbackQuery, state: FSMCo
     )
 
 async def edit_service_max_clients_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования максимального количества клиентов"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РјР°РєСЃРёРјР°Р»СЊРЅРѕРіРѕ РєРѕР»РёС‡РµСЃС‚РІР° РєР»РёРµРЅС‚РѕРІ"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -160,7 +262,7 @@ async def edit_service_max_clients_callback(callback: CallbackQuery, state: FSMC
     await state.set_state(AdminStates.waiting_for_edit_service_max_clients)
 
 async def edit_service_extras_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования дополнительных услуг"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹С… СѓСЃР»СѓРі"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -170,7 +272,7 @@ async def edit_service_extras_callback(callback: CallbackQuery, state: FSMContex
     active_services = get_active_extra_services(services)
     
     if not active_services:
-        await callback.answer("❌ Нет доступных услуг для выбора", show_alert=True)
+        await callback.answer("вќЊ РќРµС‚ РґРѕСЃС‚СѓРїРЅС‹С… СѓСЃР»СѓРі РґР»СЏ РІС‹Р±РѕСЂР°", show_alert=True)
         return
     
     service_data = data.get("edit_service_data", {})
@@ -189,7 +291,7 @@ async def edit_service_extras_callback(callback: CallbackQuery, state: FSMContex
     )
 
 async def edit_service_duration_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования длительности услуги"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РґР»РёС‚РµР»СЊРЅРѕСЃС‚Рё СѓСЃР»СѓРіРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -201,20 +303,85 @@ async def edit_service_duration_callback(callback: CallbackQuery, state: FSMCont
     await state.set_state(AdminStates.waiting_for_edit_service_duration)
 
 async def edit_service_photos_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования фотографий услуги"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ С„РѕС‚РѕРіСЂР°С„РёР№ СѓСЃР»СѓРіРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
-    
+
+    await _show_edit_service_photo_manager_for_callback(callback, state)
+
+
+async def edit_service_photo_add_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    if not is_admin:
+        await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
+        return
+
     await callback.message.edit_text(
         get_service_field_prompt("edit", "photos"),
-        parse_mode="HTML"
+        reply_markup=get_service_photo_prompt_keyboard("edit"),
+        parse_mode="HTML",
     )
     await state.set_state(AdminStates.waiting_for_edit_service_photos)
 
-# Обработчики цен
+
+async def edit_service_photo_page_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    if not is_admin:
+        await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
+        return
+
+    index = int(callback.data.split("_")[-1])
+    await _show_edit_service_photo_delete_preview(callback, state, index=index)
+
+
+async def edit_service_photo_delete_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    if not is_admin:
+        await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
+        return
+
+    data = await state.get_data()
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await callback.answer("❌ Не удалось определить услугу", show_alert=True)
+        return
+
+    index = int(callback.data.split("_")[-1])
+    deleted = delete_photo_by_index(get_service_dir(int(service_id)), index)
+    if not deleted:
+        await callback.answer("Фото не найдено", show_alert=True)
+        return
+
+    await service_repo.update_photo_ids(int(service_id), None)
+    await callback.answer("Фото удалено")
+    remaining_paths = list_photo_files(get_service_dir(int(service_id)))
+    if remaining_paths:
+        await _show_edit_service_photo_delete_preview(
+            callback,
+            state,
+            index=min(index, len(remaining_paths) - 1),
+        )
+        return
+
+    await _show_edit_service_photo_manager_for_callback(callback, state)
+
+
+async def edit_service_photo_clear_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    if not is_admin:
+        await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
+        return
+
+    data = await state.get_data()
+    service_id = data.get("edit_service_id")
+    if not service_id:
+        await callback.answer("❌ Не удалось определить услугу", show_alert=True)
+        return
+
+    clear_dir(get_service_dir(int(service_id)))
+    await service_repo.update_photo_ids(int(service_id), None)
+    await callback.answer("Все фото удалены")
+    await _show_edit_service_photo_manager_for_callback(callback, state)
+# РћР±СЂР°Р±РѕС‚С‡РёРєРё С†РµРЅ
 async def edit_service_price_weekday_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования цены в будни"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ С†РµРЅС‹ РІ Р±СѓРґРЅРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -226,7 +393,7 @@ async def edit_service_price_weekday_callback(callback: CallbackQuery, state: FS
     await state.set_state(AdminStates.waiting_for_edit_service_price_weekday)
 
 async def edit_service_price_weekend_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования цены в выходные"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ С†РµРЅС‹ РІ РІС‹С…РѕРґРЅС‹Рµ"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -238,7 +405,7 @@ async def edit_service_price_weekend_callback(callback: CallbackQuery, state: FS
     await state.set_state(AdminStates.waiting_for_edit_service_price_weekend)
 
 async def edit_service_price_extra_weekday_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования цены за дополнительного клиента в будни"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ С†РµРЅС‹ Р·Р° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРіРѕ РєР»РёРµРЅС‚Р° РІ Р±СѓРґРЅРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -250,7 +417,7 @@ async def edit_service_price_extra_weekday_callback(callback: CallbackQuery, sta
     await state.set_state(AdminStates.waiting_for_edit_service_price_extra_weekday)
 
 async def edit_service_price_extra_weekend_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования цены за дополнительного клиента в выходные"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ С†РµРЅС‹ Р·Р° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРіРѕ РєР»РёРµРЅС‚Р° РІ РІС‹С…РѕРґРЅС‹Рµ"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -262,7 +429,7 @@ async def edit_service_price_extra_weekend_callback(callback: CallbackQuery, sta
     await state.set_state(AdminStates.waiting_for_edit_service_price_extra_weekend)
 
 async def edit_service_price_group_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик редактирования групповой цены"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РіСЂСѓРїРїРѕРІРѕР№ С†РµРЅС‹"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -273,9 +440,9 @@ async def edit_service_price_group_callback(callback: CallbackQuery, state: FSMC
     )
     await state.set_state(AdminStates.waiting_for_edit_service_price_group)
 
-# Обработчики выбора дополнительных услуг
+# РћР±СЂР°Р±РѕС‚С‡РёРєРё РІС‹Р±РѕСЂР° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹С… СѓСЃР»СѓРі
 async def select_edit_extra_service_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик выбора дополнительной услуги при редактировании"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє РІС‹Р±РѕСЂР° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕР№ СѓСЃР»СѓРіРё РїСЂРё СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёРё"""
     if not is_admin:
         await callback.answer(ADMIN_DENIED_TEXT, show_alert=True)
         return
@@ -309,23 +476,23 @@ async def select_edit_extra_service_callback(callback: CallbackQuery, state: FSM
     )
 
 async def edit_extras_done_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик завершения выбора дополнительных услуг при редактировании"""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє Р·Р°РІРµСЂС€РµРЅРёСЏ РІС‹Р±РѕСЂР° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹С… СѓСЃР»СѓРі РїСЂРё СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёРё"""
     if not is_admin:
-        await callback.answer("У вас нет прав администратора", show_alert=True)
+        await callback.answer("РЈ РІР°СЃ РЅРµС‚ РїСЂР°РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", show_alert=True)
         return
     
-    # Возвращаемся к главному меню редактирования
+    # Р’РѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє РіР»Р°РІРЅРѕРјСѓ РјРµРЅСЋ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ
     await show_edit_service_main(callback, state, is_admin)
 
-# Обработчики текстовых сообщений
+# РћР±СЂР°Р±РѕС‚С‡РёРєРё С‚РµРєСЃС‚РѕРІС‹С… СЃРѕРѕР±С‰РµРЅРёР№
 async def process_edit_service_name(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка нового названия услуги."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕРіРѕ РЅР°Р·РІР°РЅРёСЏ СѓСЃР»СѓРіРё."""
     if not is_admin:
         return
 
     new_name = message.text.strip()
     if not new_name:
-        await message.answer("❌ Название не может быть пустым")
+        await message.answer("вќЊ РќР°Р·РІР°РЅРёРµ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј")
         return
 
     await update_nested_state_data(
@@ -339,13 +506,13 @@ async def process_edit_service_name(message: Message, state: FSMContext, is_admi
 
 
 async def process_edit_service_description(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка нового описания услуги."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕРіРѕ РѕРїРёСЃР°РЅРёСЏ СѓСЃР»СѓРіРё."""
     if not is_admin:
         return
 
     new_description = message.text.strip()
     if not new_description:
-        await message.answer("❌ Описание не может быть пустым")
+        await message.answer("вќЊ РћРїРёСЃР°РЅРёРµ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј")
         return
 
     await update_nested_state_data(
@@ -359,7 +526,7 @@ async def process_edit_service_description(message: Message, state: FSMContext, 
 
 
 async def process_edit_service_price_weekday(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой цены в будни."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ С†РµРЅС‹ РІ Р±СѓРґРЅРё."""
     if not is_admin:
         return
 
@@ -374,11 +541,11 @@ async def process_edit_service_price_weekday(message: Message, state: FSMContext
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректную цену (число)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅСѓСЋ С†РµРЅСѓ (С‡РёСЃР»Рѕ)")
 
 
 async def process_edit_service_price_weekend(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой цены в выходные."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ С†РµРЅС‹ РІ РІС‹С…РѕРґРЅС‹Рµ."""
     if not is_admin:
         return
 
@@ -393,11 +560,11 @@ async def process_edit_service_price_weekend(message: Message, state: FSMContext
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректную цену (число)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅСѓСЋ С†РµРЅСѓ (С‡РёСЃР»Рѕ)")
 
 
 async def process_edit_service_price_extra_weekday(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой цены за дополнительного клиента в будни."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ С†РµРЅС‹ Р·Р° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРіРѕ РєР»РёРµРЅС‚Р° РІ Р±СѓРґРЅРё."""
     if not is_admin:
         return
 
@@ -412,11 +579,11 @@ async def process_edit_service_price_extra_weekday(message: Message, state: FSMC
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректную цену (число)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅСѓСЋ С†РµРЅСѓ (С‡РёСЃР»Рѕ)")
 
 
 async def process_edit_service_price_extra_weekend(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой цены за дополнительного клиента в выходные."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ С†РµРЅС‹ Р·Р° РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРіРѕ РєР»РёРµРЅС‚Р° РІ РІС‹С…РѕРґРЅС‹Рµ."""
     if not is_admin:
         return
 
@@ -431,11 +598,11 @@ async def process_edit_service_price_extra_weekend(message: Message, state: FSMC
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректную цену (число)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅСѓСЋ С†РµРЅСѓ (С‡РёСЃР»Рѕ)")
 
 
 async def process_edit_service_price_group(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой групповой цены."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ РіСЂСѓРїРїРѕРІРѕР№ С†РµРЅС‹."""
     if not is_admin:
         return
 
@@ -450,11 +617,11 @@ async def process_edit_service_price_group(message: Message, state: FSMContext, 
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректную цену (число)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅСѓСЋ С†РµРЅСѓ (С‡РёСЃР»Рѕ)")
 
 
 async def process_edit_service_max_clients(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка нового максимального количества клиентов."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕРіРѕ РјР°РєСЃРёРјР°Р»СЊРЅРѕРіРѕ РєРѕР»РёС‡РµСЃС‚РІР° РєР»РёРµРЅС‚РѕРІ."""
     if not is_admin:
         return
 
@@ -469,11 +636,11 @@ async def process_edit_service_max_clients(message: Message, state: FSMContext, 
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректные значения (целые числа)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ (С†РµР»С‹Рµ С‡РёСЃР»Р°)")
 
 
 async def process_edit_service_duration(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новой длительности услуги."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІРѕР№ РґР»РёС‚РµР»СЊРЅРѕСЃС‚Рё СѓСЃР»СѓРіРё."""
     if not is_admin:
         return
 
@@ -489,23 +656,23 @@ async def process_edit_service_duration(message: Message, state: FSMContext, is_
         )
         await show_edit_service_main_after_edit(message, state, is_admin)
     except ValueError:
-        await message.answer("❌ Введите корректные значения (целые числа)")
+        await message.answer("вќЊ Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ (С†РµР»С‹Рµ С‡РёСЃР»Р°)")
 
 
 async def process_edit_service_photos(message: Message, state: FSMContext, is_admin: bool):
-    """Обработка новых фотографий услуги."""
+    """РћР±СЂР°Р±РѕС‚РєР° РЅРѕРІС‹С… С„РѕС‚РѕРіСЂР°С„РёР№ СѓСЃР»СѓРіРё."""
     if not is_admin:
         return
 
     if not message.photo:
-        await message.answer("❌ Отправьте фотографию")
+        await message.answer("вќЊ РћС‚РїСЂР°РІСЊС‚Рµ С„РѕС‚РѕРіСЂР°С„РёСЋ")
         return
 
     data = await state.get_data()
     service_data = data.get("edit_service_data", {})
     service_id = data.get("edit_service_id")
     if not service_id:
-        await message.answer("❌ Не удалось определить услугу")
+        await message.answer("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ СѓСЃР»СѓРіСѓ")
         return
 
     service_dir = get_service_dir(service_id)
@@ -515,21 +682,21 @@ async def process_edit_service_photos(message: Message, state: FSMContext, is_ad
             service_dir,
             save_photo_func=save_message_photo,
             count_photos_func=count_photos_in_dir,
-            clear_dir_func=clear_dir,
-            reset_before_save="photos_updated" not in service_data,
         )
     except Exception:
-        await message.answer("❌ Не удалось сохранить фотографию")
+        await message.answer("вќЊ РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ С„РѕС‚РѕРіСЂР°С„РёСЋ")
         return
 
     service_data["photos_updated"] = True
     service_data["photos_count"] = photos_count
+    service_data["photo_ids"] = None
     await state.update_data(edit_service_data=service_data)
-    await show_edit_service_main_after_edit(message, state, is_admin)
-
+    await service_repo.update_photo_ids(int(service_id), None)
+    await message.answer(f"вњ… Р¤РѕС‚РѕРіСЂР°С„РёРё РґРѕР±Р°РІР»РµРЅС‹. Р’СЃРµРіРѕ: {photos_count}")
+    await _show_edit_service_photo_manager_for_message(message, state)
 
 async def show_edit_service_main_after_edit(message: Message, state: FSMContext, is_admin: bool):
-    """Показ главного меню после редактирования параметра."""
+    """РџРѕРєР°Р· РіР»Р°РІРЅРѕРіРѕ РјРµРЅСЋ РїРѕСЃР»Рµ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РїР°СЂР°РјРµС‚СЂР°."""
     data = await state.get_data()
     service_data = data.get("edit_service_data", {})
     await message.answer(
@@ -540,9 +707,9 @@ async def show_edit_service_main_after_edit(message: Message, state: FSMContext,
 
 
 async def save_edit_service_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Обработчик сохранения изменений услуги."""
+    """РћР±СЂР°Р±РѕС‚С‡РёРє СЃРѕС…СЂР°РЅРµРЅРёСЏ РёР·РјРµРЅРµРЅРёР№ СѓСЃР»СѓРіРё."""
     if not is_admin:
-        await callback.answer("У вас нет прав администратора", show_alert=True)
+        await callback.answer("РЈ РІР°СЃ РЅРµС‚ РїСЂР°РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", show_alert=True)
         return
 
     data = await state.get_data()
@@ -558,7 +725,7 @@ async def save_edit_service_callback(callback: CallbackQuery, state: FSMContext,
             summary = build_service_save_summary(
                 service,
                 service_data,
-                title="Услуга успешно обновлена!",
+                title="РЈСЃР»СѓРіР° СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅР°!",
                 service_id=service_id,
             )
             await callback.message.edit_text(
@@ -567,13 +734,13 @@ async def save_edit_service_callback(callback: CallbackQuery, state: FSMContext,
                 parse_mode="HTML",
             )
         else:
-            await callback.answer("❌ Ошибка при обновлении услуги", show_alert=True)
+            await callback.answer("вќЊ РћС€РёР±РєР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё СѓСЃР»СѓРіРё", show_alert=True)
     except Exception as e:
-        await callback.answer(f"❌ Ошибка при обновлении услуги: {e}", show_alert=True)
+        await callback.answer(f"вќЊ РћС€РёР±РєР° РїСЂРё РѕР±РЅРѕРІР»РµРЅРёРё СѓСЃР»СѓРіРё: {e}", show_alert=True)
 
 
 def register_edit_service_new_handlers(dp: Dispatcher):
-    """Регистрация обработчиков редактирования услуг."""
+    """Р РµРіРёСЃС‚СЂР°С†РёСЏ РѕР±СЂР°Р±РѕС‚С‡РёРєРѕРІ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ СѓСЃР»СѓРі."""
 
     dp.callback_query.register(start_edit_service_new, F.data.startswith("edit_service_new_"))
     dp.callback_query.register(show_edit_service_main, F.data == "show_edit_service_main")
@@ -585,6 +752,10 @@ def register_edit_service_new_handlers(dp: Dispatcher):
     dp.callback_query.register(edit_service_extras_callback, F.data == "edit_service_extras")
     dp.callback_query.register(edit_service_duration_callback, F.data == "edit_service_duration")
     dp.callback_query.register(edit_service_photos_callback, F.data == "edit_service_photos")
+    dp.callback_query.register(edit_service_photo_add_callback, F.data == "edit_service_photo_add")
+    dp.callback_query.register(edit_service_photo_clear_callback, F.data == "edit_service_photo_clear")
+    dp.callback_query.register(edit_service_photo_page_callback, F.data.startswith("edit_service_photo_page_"))
+    dp.callback_query.register(edit_service_photo_delete_callback, F.data.startswith("edit_service_photo_delete_"))
 
     dp.callback_query.register(edit_service_price_weekday_callback, F.data == "edit_service_price_weekday")
     dp.callback_query.register(edit_service_price_weekend_callback, F.data == "edit_service_price_weekend")
@@ -607,3 +778,4 @@ def register_edit_service_new_handlers(dp: Dispatcher):
     dp.message.register(process_edit_service_max_clients, AdminStates.waiting_for_edit_service_max_clients)
     dp.message.register(process_edit_service_duration, AdminStates.waiting_for_edit_service_duration)
     dp.message.register(process_edit_service_photos, AdminStates.waiting_for_edit_service_photos)
+
